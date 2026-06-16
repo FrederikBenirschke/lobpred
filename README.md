@@ -1,59 +1,73 @@
 # lobpred: predicting short-horizon order-book moves on prediction markets
 
-On a prediction market you buy a contract that pays a dollar if something
-happens and nothing if it doesn't, so its price sits between 0 and 1 and reads
-as the crowd's probability. Kalshi and Polymarket run live order books for
-thousands of these: every NBA game, every World Cup match, tomorrow's high
-temperature in Chicago. I recorded those books for five days and asked one
-question. From the shape of the book right now, can you tell where the price
-drifts over the next few seconds?
+A prediction market trades contracts that pay one dollar if an event occurs and
+nothing otherwise, so each price lies in [0, 1] and behaves as the market's
+probability of that event. Kalshi and Polymarket maintain live limit order books
+for thousands of such contracts, covering NBA games, World Cup matches, and
+daily high-temperature settlements. This study draws on five days of those books
+to ask whether the next few seconds of price movement are predictable from the
+current book, and which matters more for that prediction: the feature
+representation or the model class.
 
-I kept hearing that deep sequence models beat plain gradient-boosted trees on
-order-book data, so I built both on the same recordings and held them to one
-setup: the same features, the same target, the same split. Most comparisons
-quietly cheat here, because the deep model reads a window of history while the
-tree reads a single snapshot. I give the tree that same window before I call a
-winner.
+Deep sequence models are widely reported to beat gradient-boosted trees on
+order-book data. This benchmark tests that on the same five days of books and
+varies two things: how the order book is represented, and which model reads it.
+The representations are a set of scale-free microstructure features (order-flow
+imbalance, book imbalance, relative depth) and the raw order book itself (bid and
+ask prices and sizes across five levels). The models are linear and tree
+baselines (ridge, LightGBM, logistic) and deep sequence networks (a TCN,
+DeepLOB, an axial-attention model, and an LSTM). Each predicts the change in
+microprice over the next few seconds, on one shared target and split.
 
-The short answer is that the representation matters more than the model. Hand
-every model the raw order book instead of engineered ratios and all of them
-improve. Once the tree and the net read the same window, they finish level.
-Every number below says which markets it came from and how many samples sit
-behind it.
+One confound recurs in such comparisons: a sequence network reads a window of
+history while a tree reads a single snapshot, so the tree receives the same
+window before any model is judged. With that controlled, the representation
+matters more than the model. The raw order book raises correlation by 0.12 to
+0.19 over the engineered features for every model, and with matched inputs the
+tree and the strongest network converge near 0.50. Each result below names the
+markets it draws from and its sample size.
 
-> **The data.** This is a prediction study, so it reports forecast quality and
-> no trading PnL. Over five days I recorded about 33M order-book updates on
-> Kalshi and PolymarketUS and kept the 923 most active markets, 21.7M updates,
-> with their matching trade tape. The Kalshi side spans MLB (138 markets), NBA
-> (63), tennis (71), WNBA (7), World Cup soccer (102), 172 daily-temperature
-> markets, and 26 others; PolymarketUS adds 344 on the same events. The raw
-> recordings carry trader usernames, so they stay out of the repo. The synthetic
-> generator and the FI-2010 loader reproduce every pipeline and finding here.
-> Want the collected dataset? Email benirschke.math@gmail.com.
+> **The data.** This is a prediction study: it reports forecast quality, not
+> trading PnL. The recording spans five days and about 33M order-book updates on
+> Kalshi and PolymarketUS, of which the 923 most active markets (21.7M updates)
+> are retained with their matching trade tape. The Kalshi markets cover MLB
+> (138), NBA (63), tennis (71), WNBA (7), World Cup soccer (102), 172
+> daily-temperature markets, and 26 others; PolymarketUS adds 344 on the same
+> events. The raw recordings contain trader usernames and stay out of the
+> repository. The synthetic generator and the FI-2010 loader reproduce every
+> pipeline and result. The collected dataset is available on request at
+> benirschke.math@gmail.com.
 
-## What I found
+## Summary
 
-The raw order book is where the gains come from. Adding it on top of the
-engineered ratios lifts correlation by 0.12 to 0.19 for every model, tree and
-net alike. That lift is real order-book skill, not a quirk of bounded prices:
-hold the price level fixed by scoring inside price-decile buckets and almost all
-of it survives, +0.11 of a +0.12 pooled lift.
+The raw order book is the largest single lever. Adding the raw price and size
+ladder on top of the engineered features raises correlation by 0.12 to 0.19 for
+every model, trees and networks alike, so the gain comes from the inputs rather
+than the architecture.
 
-The model class barely matters once the inputs match. Give LightGBM the same
-32-tick window the nets read and it ties the best net near 0.50 correlation. The
-net only pulls ahead when the comparison hands it history the snapshot tree
-never sees.
+That gain is genuine rather than a property of the price scale. A
+prediction-market price sits in [0, 1], and a bounded price drifts back toward
+the interior on its own, so some of the lift could be that mechanical reversion.
+Scored within price-decile buckets, where the absolute price stays roughly
+constant and cannot drive the result, +0.11 of the +0.12 pooled lift remains,
+spread across every decile. The raw book therefore carries within-price
+order-book information that the engineered ratios discard.
 
-Two smaller results held up. The target you pick beats the model you pick: a
-smoothed exit over a few seconds reaches 0.41 correlation where a single future
-instant reaches 0.25, a wider gap than any two models show. And a widely-cited
-71% three-class accuracy turns out to be a class-balance artifact, since
-balancing the "stable" majority drops it to 0.46-0.50, in line with the source's
-own Up/Down F1.
+Model class has little effect once the inputs match. Given the same 32-tick
+window, LightGBM reaches the same correlation near 0.50 as the strongest network.
+The network leads only when the comparison grants it history the snapshot tree
+never receives.
 
-One choice shaped all of it: I call a market "active" by how often its mid price
-moves, not how often it posts a quote. A book that fires hundreds of quotes a
-minute and moves price twice is mostly noise.
+Two secondary results hold. The target specification matters more than the
+model: a smoothed exit over a few seconds reaches 0.41 correlation against 0.25
+for a single future instant, wider than the spread between any two models. And a
+frequently cited 71% three-class accuracy is a class-balance artifact, since
+balancing the majority "stable" class lowers it to 0.46-0.50, consistent with the
+source's reported Up/Down F1.
+
+Market selection follows price activity rather than quote count. A book that
+posts hundreds of quotes per minute while its mid price moves twice contributes
+noise, so the ranking uses the mid-move rate.
 
 ## Quickstart
 
@@ -109,10 +123,10 @@ bid_price, bid_size, ask_price, ask_size, mid, spread,
 bids_price, bids_size, asks_price, asks_size   # lists, L levels each
 ```
 
-I build every feature family on the same rows, so they compare on equal
+Every feature family is built on the same rows, so they compare on equal
 footing. The first three form the base set; the rest are stationary extensions
-(`features.py`). Every family except **levels** is price-invariant, which lets
-me pool across instruments.
+(`features.py`). Every family except **levels** is price-invariant, which permits
+pooling across instruments.
 
 | family | builder | what it is |
 |---|---|---|
@@ -148,41 +162,41 @@ nonzero bucket at a set offset.
 
 ### Leakage discipline
 
-- **Forward target, built here.** I never read it from a backward rolling
-  window. Two forms: point `price(t+h) − price(t)` and smoothed
+- **Forward target, computed forward.** The target is never read from a backward
+  rolling window. Two forms: point `price(t+h) − price(t)` and smoothed
   `mean(price over (t, t+h]) − price(t)` (TWAP over the hold). Every averaged
   price falls after `t`, so neither form leaks.
-- **Train-only normalization.** I fit z-score statistics on the train rows and
-  apply them to test.
-- **Walk-forward with a purge embargo.** I split by global wall-clock time and
-  drop a gap of one horizon or more around each boundary, so no label straddles
-  it (López de Prado). A market stays inside one split.
+- **Train-only normalization.** Z-score statistics are fit on the train rows and
+  applied to test.
+- **Walk-forward with a purge embargo.** The split is by global wall-clock time,
+  with a gap of one horizon or more dropped around each boundary so no label
+  straddles it (López de Prado). Each market stays inside one split.
 
 ### Churn vs discovery
 
 An active market moves its price. `add_activity_tier` ranks markets by
 `mid_moves_per_min`, the count of real mid changes, and ignores
 `updates_per_min`, which counts quote churn. A book that posts 500 quotes a
-minute with 2 mid moves adds noise. Rank on churn and you poison every
-downstream number, so the selection path ranks on discovery.
+minute with 2 mid moves adds noise. Ranking on churn poisons every downstream
+number, so the selection ranks on discovery.
 
 ### The ablation (one change per rung)
 
 `run.py` reports the gap at each rung: `phase1−phase0` (microprice target),
 `phase2−phase1` (grid vs levels), `phase3−phase2` (flow scalars),
 `phase4−phase3` (flow-dynamics + return/vol + book-shape + activity/spread),
-`phase5−phase4` (trade-tape), and deep−simple within each phase. Read the gaps.
-The absolute numbers shift with the fold; the gaps hold.
+`phase5−phase4` (trade-tape), and deep−simple within each phase. The gaps are the
+comparison: absolute numbers shift with the fold while the gaps hold.
 
 ### Dual head
 
-I run two heads, because they fail differently. The regression head predicts
-the forward change, judged on corr and hit-rate; I skip R², which cross-fold
-regime shift dominates. The 3-class sign head gives paper-comparable accuracy
-and macro-F1. I standardize the regression target for the net and invert the
-predictions back to price units, which holds the net's outputs in range.
-DeepLOB needs a LayerNorm before the LSTM and gradient clipping, or its
-grad-norm climbs to ~1e17. The code documents both fixes.
+The harness runs two heads, which fail differently. The regression head predicts
+the forward change, judged on correlation and hit-rate; R² is omitted, since
+cross-fold regime shift dominates it. The 3-class sign head gives
+paper-comparable accuracy and macro-F1. The regression target is standardized for
+the network and the predictions inverted back to price units, which keeps the
+outputs in range. DeepLOB needs a LayerNorm before the LSTM and gradient
+clipping, or its grad-norm climbs to ~1e17. The code documents both fixes.
 
 ## Results (development dataset)
 
@@ -195,8 +209,8 @@ point, signal in the micro-gap).
 > These four tables were measured on the **base** feature set (grid +
 > scalar, 46 features). The extended families (flow-dynamics, return/vol,
 > book-shape, trade-tape) are newer; their marginal contribution is exactly
-> what the `phase4−phase3` and `phase5−phase4` ablation gaps measure. I have
-> not folded that run into the tables below, and I claim no numbers for it here.
+> what the `phase4−phase3` and `phase5−phase4` ablation gaps measure. That run is
+> not folded into the tables below, and no numbers are claimed for it here.
 
 **Population (stated, per the project's discipline):** price-active books
 only, top activity tier by mid-move rate, ~185–198 markets, ~2.7M
@@ -249,13 +263,13 @@ Feature-group permutation importance (Δcorr when shuffled):
 | ofi | −0.001 |
 
 The spread and micro-gap hold the skill. Depth shape and OFI add ≈0. At five
-levels the depth-"pockets" thesis fails the permutation test, and I report that
-negative.
+levels the depth-"pockets" thesis fails the permutation test, reported here as a
+negative result.
 
 ### Finding 4: the 71% headline is a balance artifact
 
-A well-known result reports ~71% 3-class accuracy. Balance the Stable class
-(`--balance`, train and test) and accuracy drops to 0.44-0.50 here, so an easy
+A well-known result reports ~71% 3-class accuracy. Balancing the Stable class
+(`--balance`, train and test) drops accuracy to 0.44-0.50 here, so an easy
 majority inflates the 71% rather than data volume (the same source reports
 Up/Down F1 ≈ 0.50). On the directional metric (macro-F1 ~0.46-0.50, sign-hit
 0.55-0.59) the gap stays small. Caveat: this is cross-dataset with a different
@@ -267,19 +281,20 @@ the robust part.
 *Population:* the 923-market pooled corpus (21.7M updates), regression on the
 19s forward-average microprice change, single-split OOS.
 
-I gave every model the raw price and size at five levels next to the engineered
-features. All of them rose: LightGBM 0.34 to 0.46, the TCN 0.32 to 0.51,
-attention 0.35 to 0.48, the LSTM 0.31 to 0.44. The raw lift runs +0.12 to +0.19.
+Every model received the raw price and size at five levels alongside the
+engineered features, and all of them rose: LightGBM 0.34 to 0.46, the TCN 0.32 to
+0.51, attention 0.35 to 0.48, the LSTM 0.31 to 0.44. The raw lift runs +0.12 to
++0.19.
 
-Two controls keep the read honest. The lift is not the bounded-price reversion:
-bucket the test rows by current price into deciles and recompute corr inside each
-bucket, where absolute price holds roughly constant, and the raw lift survives
-(+0.11 of the +0.12 pooled), spread across every decile. So the raw book carries
-within-price order-book skill. And the net does not beat the tree on this input:
-give LightGBM the same 32-tick window the nets see (flattened to 1,120 features)
-and it reaches 0.50, level with the TCN. The earlier read that "raw lifts only
-the tree" came from normalizing raw features per-market, which removes the price
-level and craters raw (0.47 to 0.32), and from testing only an LSTM.
+Two controls keep the result honest. First, the lift is not the bounded-price
+reversion: scored within price deciles, where the absolute price stays roughly
+constant, the raw lift survives (+0.11 of the +0.12 pooled), spread across every
+decile, so the raw book carries within-price order-book skill. Second, the
+network does not beat the tree on this input: given the same 32-tick window
+(flattened to 1,120 features), LightGBM reaches 0.50, level with the TCN. The
+earlier result that "raw lifts only the tree" came from normalizing raw features
+per-market, which removes the price level and craters raw (0.47 to 0.32), and
+from testing only an LSTM.
 
 Tradeability stays a separate, open question: these corrs score microprice
 change, which drifts within a fixed bid and ask, so a taker signal likely falls
@@ -320,16 +335,16 @@ examples/
 
 ### Learning deep learning on the LOB
 
-Open `examples/deeplob_walkthrough.py` to see the mechanics in one script:
+`examples/deeplob_walkthrough.py` shows the mechanics in one script:
 synthetic book → **per-level stationary tensor**
 (`add_perlevel_features`: OBI/OFI/rel-size per level) → **PerLevelLOB**
 (convolves across levels + LSTM over time, the DeepLOB/Kolm representation)
 → training curve → comparison to LightGBM. Runs in ~1 min, no downloads.
 
-You can train a net stably on ~10⁵ windows, which you generate in seconds.
-More data alone does not rescue the net on engineered features.
-`examples/regime_scaling.py` sweeps the training size and pits SeqLSTM against
-LightGBM on the same features, target, and walk-forward split:
+A network trains stably on ~10⁵ windows, generated in seconds. More data alone
+does not rescue the network on engineered features.
+`examples/regime_scaling.py` sweeps the training size and compares SeqLSTM
+against LightGBM on the same features, target, and walk-forward split:
 
 | train N | LightGBM | SeqLSTM | gap (tree − net) |
 |---|---|---|---|
@@ -340,10 +355,10 @@ LightGBM on the same features, target, and walk-forward split:
 | 1.7 M | 0.528 | 0.507 | +0.021 |
 
 (corr on the held-out fold; SeqLSTM is a 2-seed ensemble; the synthetic signal
-is planted, so read the trend rather than the level.) The net leads at 10 K. As
-data grows, the tree keeps improving while the net plateaus, so the gap moves
-the wrong way for "DL just needs scale." Engineered features leave the net
-nothing extra to learn, and the new rows sharpen the tree.
+is planted, so the trend matters more than the level.) The network leads at 10 K.
+As data grows, the tree keeps improving while the network plateaus, so the gap
+moves the wrong way for "DL just needs scale." Engineered features leave the
+network nothing extra to learn, and the new rows sharpen the tree.
 
 ### The regime boundary
 
@@ -352,8 +367,8 @@ Deep learning wins on the other axis: raw book input at large scale. DeepLOB
 ahead of the classical baselines in that paper. Its CNN learns features off the
 raw 10-level price/size ladder that hand-engineered scalars discard, and a tree
 discards them too. Two caveats keep this honest. FI-2010's baselines are linear
-and TABL nets, so nobody there tuned a GBDT against DeepLOB. FI-2010 also comes
-from a different venue at a different scale. Read it as a regime map over input
+and TABL nets, so no GBDT was tuned against DeepLOB there. FI-2010 also comes
+from a different venue at a different scale. It maps a regime over input
 representation, scale, and signal richness, not a head-to-head on one dataset.
 
 The map has two cells:
@@ -369,12 +384,12 @@ five levels and this scale no net pulls ahead of a tree with the same input.
 
 ## Honest limitations
 
-- The development books run five levels deep, so I cannot test the
-  depth-attention thesis past L5. Finding 3 is scoped to those five levels.
-- R² swings with cross-fold regime shift, so I trust direction (corr, hit) and
-  the 3-class metrics over R².
-- FI-2010 ships pre-normalized and event-indexed. Use the level and scalar
-  feature sets and the event-horizon target on it; the fixed-tick grid needs a
+- The development books run five levels deep, so the depth-attention thesis is
+  untestable past L5. Finding 3 is scoped to those five levels.
+- R² swings with cross-fold regime shift, so direction (corr, hit) and the
+  3-class metrics are preferred over R².
+- FI-2010 ships pre-normalized and event-indexed. It supports the level and
+  scalar feature sets and the event-horizon target; the fixed-tick grid needs a
   real tick, which the synthetic generator and raw venue data carry.
 - The synthetic generator plants its signal, so its absolute numbers sanity-
   check the pipeline. The development-data tables carry the empirical result.
