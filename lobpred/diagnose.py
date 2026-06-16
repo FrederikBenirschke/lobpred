@@ -9,7 +9,7 @@ Writes, under --out:
   attention_pockets.png      attention-by-book-depth (the pockets view)
 
 Separate from run.py (the gap-table CLI) so the heavy history capture and
-plotting don't slow the headline ablation. Requires the ``plot`` extra
+plotting don't slow the headline feature comparison. Requires the ``plot`` extra
 (matplotlib).
 """
 

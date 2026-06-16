@@ -1,4 +1,4 @@
-"""Run the staged ablation and print the attribution gap table.
+"""Run the staged feature comparison and print the attribution gap table.
 
     python -m lobpred.run --roots experiments/synthetic \
         --phases 0 1 2 3 --horizon 30 --seq-len 24 --n-folds 3 --epochs 12

@@ -81,7 +81,7 @@ python -m lobpred.data.synthetic --out experiments/synthetic --n-markets 12 --mi
 KMP_DUPLICATE_LIB_OK=TRUE python -m lobpred.analyze \
     --roots experiments/synthetic --horizon-events 50
 
-# 3) the staged ablation gap table (phases 4–5 add the extended + trade features)
+# 3) the staged feature-comparison gap table (phases 4–5 add the extended + trade features)
 KMP_DUPLICATE_LIB_OK=TRUE python -m lobpred.run \
     --roots experiments/synthetic --phases 0 1 2 3 4 5 --horizon 30
 
@@ -160,43 +160,52 @@ nonzero bucket at a set offset.
 
 ## Methodology
 
-### Leakage discipline
+### Guarding against lookahead
 
-- **Forward target, computed forward.** The target is never read from a backward
-  rolling window. Two forms: point `price(t+h) − price(t)` and smoothed
-  `mean(price over (t, t+h]) − price(t)` (TWAP over the hold). Every averaged
-  price falls after `t`, so neither form leaks.
-- **Train-only normalization.** Z-score statistics are fit on the train rows and
-  applied to test.
-- **Walk-forward with a purge embargo.** The split is by global wall-clock time,
-  with a gap of one horizon or more dropped around each boundary so no label
-  straddles it (López de Prado). Each market stays inside one split.
+Three rules keep future information out of the training data:
 
-### Churn vs discovery
+- **The target is computed forward.** It is never taken from a backward-looking
+  window. Two forms are used: a point move, `price(t+h) − price(t)`, and a
+  smoothed move, `mean(price over (t, t+h]) − price(t)` (the average price over
+  the hold). Every price entering the target falls after `t`, so neither form
+  can observe its own outcome.
+- **Normalization is fit on the training set only.** The z-score statistics are
+  estimated on the train rows and then applied to the test rows.
+- **The split is by time, with an embargo.** Train and test are separated by
+  wall-clock time, and a gap of at least one horizon is removed on each side of
+  the boundary so no label straddles it (the purged walk-forward split of López
+  de Prado). Each market stays entirely within one side.
 
-An active market moves its price. `add_activity_tier` ranks markets by
-`mid_moves_per_min`, the count of real mid changes, and ignores
-`updates_per_min`, which counts quote churn. A book that posts 500 quotes a
-minute with 2 mid moves adds noise. Ranking on churn poisons every downstream
-number, so the selection ranks on discovery.
+### Measuring activity by real price moves
 
-### The ablation (one change per rung)
+A market is active when its price actually moves. `add_activity_tier` ranks
+markets by `mid_moves_per_min` — the number of genuine mid-price changes — and
+ignores `updates_per_min`, which only counts quotes being posted and pulled. A
+book that posts 500 quotes a minute while its mid moves twice contributes mostly
+noise. Ranking by quote count carries that noise into every downstream result,
+so the ranking uses real price moves instead.
 
-`run.py` reports the gap at each rung: `phase1−phase0` (microprice target),
-`phase2−phase1` (grid vs levels), `phase3−phase2` (flow scalars),
-`phase4−phase3` (flow-dynamics + return/vol + book-shape + activity/spread),
-`phase5−phase4` (trade-tape), and deep−simple within each phase. The gaps are the
-comparison: absolute numbers shift with the fold while the gaps hold.
+### Adding features one group at a time
 
-### Dual head
+`run.py` builds up the feature set in stages and reports the change in score at
+each step: `phase1−phase0` (microprice target), `phase2−phase1` (fixed grid vs.
+raw levels), `phase3−phase2` (order-flow scalars), `phase4−phase3` (flow
+dynamics + returns/volatility + book shape + activity/spread), `phase5−phase4`
+(trade tape), plus deep vs. simple model within each stage. The step-by-step
+changes are the result of interest: absolute scores move with the fold, but the
+differences between consecutive stages hold steady.
 
-The harness runs two heads, which fail differently. The regression head predicts
-the forward change, judged on correlation and hit-rate; R² is omitted, since
-cross-fold regime shift dominates it. The 3-class sign head gives
-paper-comparable accuracy and macro-F1. The regression target is standardized for
-the network and the predictions inverted back to price units, which keeps the
-outputs in range. DeepLOB needs a LayerNorm before the LSTM and gradient
-clipping, or its grad-norm climbs to ~1e17. The code documents both fixes.
+### Two prediction targets
+
+The harness trains two output heads, which fail in different ways. The
+regression head predicts the forward price change and is scored on correlation
+and hit-rate; R² is left out, since cross-fold regime shift dominates it. The
+three-class sign head reports accuracy and macro-F1 for comparison with the
+published literature. The regression target is standardized for the neural
+networks and the predictions are mapped back to price units afterward, which
+keeps outputs in range. DeepLOB needs a LayerNorm before its LSTM and gradient
+clipping, otherwise its gradient norm blows up to ~1e17; the code documents both
+fixes.
 
 ## Results (development dataset)
 
@@ -209,7 +218,7 @@ point, signal in the micro-gap).
 > These four tables were measured on the **base** feature set (grid +
 > scalar, 46 features). The extended families (flow-dynamics, return/vol,
 > book-shape, trade-tape) are newer; their marginal contribution is exactly
-> what the `phase4−phase3` and `phase5−phase4` ablation gaps measure. That run is
+> what the `phase4−phase3` and `phase5−phase4` staged gaps measure. That run is
 > not folded into the tables below, and no numbers are claimed for it here.
 
 **Population (stated, per the project's discipline):** price-active books
@@ -320,7 +329,7 @@ lobpred/
   evaluate.py       prediction metrics (corr/hit/acc/F1) + the torch training loop + gap tables
   diagnostics.py    training-curve / error-analysis / attention-pocket plots
   analyze.py        model comparison + feature-group importance     (Findings 1 & 3)
-  run.py            the staged ablation gap table (phases 0–5)
+  run.py            the staged feature-comparison gap table (phases 0–5)
   target_study.py   point vs smoothed target across horizons        (Finding 2)
   diagnose.py       train one phase with history, write plots
   microstructure.py vendored: microprice / imbalance / depth
