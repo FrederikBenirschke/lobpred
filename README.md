@@ -12,8 +12,9 @@ engineered features, and given matched inputs the tree and the best net tie.
 Every result names its population and sample size.
 
 > **Scope.** I built this as a prediction study: forecast quality, no trading
-> strategy or PnL. I recorded 923 markets on Kalshi and PolymarketUS over five
-> days, 21.7M order-book updates with the matching trade tape. The Kalshi side
+> strategy or PnL. Over five days I recorded ~33M order-book updates on Kalshi
+> and PolymarketUS, then kept the 923 most active markets (21.7M updates) with
+> the matching trade tape. The Kalshi side
 > covers MLB (138 markets), NBA (63), tennis ATP/ITF (71), WNBA (7), World Cup
 > soccer (102), and 172 daily-temperature markets, plus 26 other Kalshi markets;
 > PolymarketUS adds 344 markets across the same events. The raw recordings carry trader PII, so they
