@@ -1,47 +1,59 @@
-# lobpred: short-horizon limit-order-book move prediction
+# lobpred: predicting short-horizon order-book moves on prediction markets
 
-Can you predict short-horizon order-book moves, and what drives accuracy more,
-the feature representation or the model class? I benchmark deep sequence models
-(TCN, DeepLOB, axial attention) against simple baselines (ridge, LightGBM,
-logistic) on the same features, target, and split, and I control the comparison
-that usually gets fudged: I give the tree the same window the nets see before I
-read off a winner.
+On a prediction market you buy a contract that pays a dollar if something
+happens and nothing if it doesn't, so its price sits between 0 and 1 and reads
+as the crowd's probability. Kalshi and Polymarket run live order books for
+thousands of these: every NBA game, every World Cup match, tomorrow's high
+temperature in Chicago. I recorded those books for five days and asked one
+question. From the shape of the book right now, can you tell where the price
+drifts over the next few seconds?
 
-The answer is representation. The raw order book lifts every model over
-engineered features, and given matched inputs the tree and the best net tie.
-Every result names its population and sample size.
+I kept hearing that deep sequence models beat plain gradient-boosted trees on
+order-book data, so I built both on the same recordings and held them to one
+setup: the same features, the same target, the same split. Most comparisons
+quietly cheat here, because the deep model reads a window of history while the
+tree reads a single snapshot. I give the tree that same window before I call a
+winner.
 
-> **Scope.** I built this as a prediction study: forecast quality, no trading
-> strategy or PnL. Over five days I recorded ~33M order-book updates on Kalshi
-> and PolymarketUS, then kept the 923 most active markets (21.7M updates) with
-> the matching trade tape. The Kalshi side
-> covers MLB (138 markets), NBA (63), tennis ATP/ITF (71), WNBA (7), World Cup
-> soccer (102), and 172 daily-temperature markets, plus 26 other Kalshi markets;
-> PolymarketUS adds 344 markets across the same events. The raw recordings carry trader PII, so they
-> stay out of the repo. I ship a **synthetic LOB generator** and an **FI-2010
-> loader** that reproduce every pipeline and finding. Email
-> benirschke.math@gmail.com for the collected dataset.
+The short answer is that the representation matters more than the model. Hand
+every model the raw order book instead of engineered ratios and all of them
+improve. Once the tree and the net read the same window, they finish level.
+Every number below says which markets it came from and how many samples sit
+behind it.
 
-## TL;DR: what I found
+> **The data.** This is a prediction study, so it reports forecast quality and
+> no trading PnL. Over five days I recorded about 33M order-book updates on
+> Kalshi and PolymarketUS and kept the 923 most active markets, 21.7M updates,
+> with their matching trade tape. The Kalshi side spans MLB (138 markets), NBA
+> (63), tennis (71), WNBA (7), World Cup soccer (102), 172 daily-temperature
+> markets, and 26 others; PolymarketUS adds 344 on the same events. The raw
+> recordings carry trader usernames, so they stay out of the repo. The synthetic
+> generator and the FI-2010 loader reproduce every pipeline and finding here.
+> Want the collected dataset? Email benirschke.math@gmail.com.
 
-1. **Representation beats model class.** The raw order book adds +0.12 to +0.19
-   corr over engineered features for every model. Given the same 32-tick window,
-   LightGBM and the best deep net tie near 0.50. The net leads only when the
-   comparison hands it lookback the snapshot tree never gets.
-2. **The raw lift is real order-book skill, not a price-level artifact.** Hold
-   price fixed (corr inside price-decile buckets) and the lift stays +0.11 of a
-   +0.12 pooled lift, so it is not the bounded-[0,1] reversion.
-3. **The target choice matters more than the model choice.** A smoothed exit
-   (TWAP over a few seconds) reaches 0.41 corr; one future instant reaches 0.25.
-   That 0.16 gap beats any gap between models.
-4. **A widely-cited 71% three-class accuracy is a class-balance artifact.**
-   Balance the "stable" majority and accuracy drops to 0.46-0.50, which matches
-   the directional skill in the source's own Up/Down F1.
+## What I found
 
-Two choices shaped the results. I rank "active" markets by how often the mid
-moves, since ranking by update rate selects for quote flicker (*Churn vs
-discovery*). And I match inputs before comparing models, since a snapshot tree
-against a sequence net measures lookback, not architecture.
+The raw order book is where the gains come from. Adding it on top of the
+engineered ratios lifts correlation by 0.12 to 0.19 for every model, tree and
+net alike. That lift is real order-book skill, not a quirk of bounded prices:
+hold the price level fixed by scoring inside price-decile buckets and almost all
+of it survives, +0.11 of a +0.12 pooled lift.
+
+The model class barely matters once the inputs match. Give LightGBM the same
+32-tick window the nets read and it ties the best net near 0.50 correlation. The
+net only pulls ahead when the comparison hands it history the snapshot tree
+never sees.
+
+Two smaller results held up. The target you pick beats the model you pick: a
+smoothed exit over a few seconds reaches 0.41 correlation where a single future
+instant reaches 0.25, a wider gap than any two models show. And a widely-cited
+71% three-class accuracy turns out to be a class-balance artifact, since
+balancing the "stable" majority drops it to 0.46-0.50, in line with the source's
+own Up/Down F1.
+
+One choice shaped all of it: I call a market "active" by how often its mid price
+moves, not how often it posts a quote. A book that fires hundreds of quotes a
+minute and moves price twice is mostly noise.
 
 ## Quickstart
 
