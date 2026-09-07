@@ -12,7 +12,7 @@ that always predicts "stable", so we report several complementary views:
 ``run.py`` / ``analyze.py`` / ``target_study.py`` train one model per
 walk-forward fold and average. NOTE that the headline numbers in the README
 were produced by the research scripts, which use a SINGLE chronological
-split at the 0.66 quantile, one seed — so they are point estimates, not
+split at the 0.66 quantile, one seed, so they are point estimates, not
 fold-averaged. Overlapping label windows also mean the effective sample is
 far below the row count; read the gaps between models, not the third decimal.
 """

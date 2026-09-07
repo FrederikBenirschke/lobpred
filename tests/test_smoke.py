@@ -199,7 +199,7 @@ def test_make_windows_stale_filters():
     # mid-move floor drops the frozen-tail windows
     mv = D.make_windows(pool, feats, seq_len=8, min_window_mid_moves=1)
     assert 0 < mv.X.shape[0] < base.X.shape[0]
-    # the mid-move guard needs a mid column — loud, not silent (Rule #0.5)
+    # the mid-move guard needs a mid column: loud, not silent (Rule #0.5)
     with pytest.raises(KeyError):
         D.make_windows(pool.drop("mid"), feats, seq_len=8, min_window_mid_moves=1)
 
@@ -244,7 +244,7 @@ def test_forward_target_rejects_unsorted_timestamps():
     """Unsorted input must raise, not yield silently wrong labels.
 
     add_forward_target uses searchsorted, which requires ascending ts. Nothing
-    downstream would signal a violation — the labels would simply be wrong.
+    downstream would signal a violation; the labels would simply be wrong.
     """
     pool = synthetic.generate_pool(n_markets=2, minutes=10, seed=6)
     flipped = pool.sort("timestamp_ns", descending=True)
@@ -260,7 +260,7 @@ def test_class_probabilities_use_the_fixed_three_class_basis():
     """A fold missing a sign class must still decode to [-1, 0, +1].
 
     sklearn returns one column per class PRESENT in training. With a deadband
-    a fold can contain no +1 rows, giving (N, 2) — and classification_metrics
+    a fold can contain no +1 rows, giving (N, 2), and classification_metrics
     decodes with argmax-1, so column 1 would silently mean class 0 rather
     than +1.
     """

@@ -420,7 +420,7 @@ def add_forward_target(
         if n > 1 and not (np.diff(ts) >= 0).all():
             raise ValueError(
                 f"timestamps not ascending for market {_mid!r}; sort by "
-                "(market_id, timestamp_ns) before add_forward_target — "
+                "(market_id, timestamp_ns) before add_forward_target; "
                 "searchsorted would otherwise return silently wrong labels")
         if avg_window_s is not None:
             win_ns = int(avg_window_s * NS_PER_S)

@@ -57,7 +57,7 @@ def _build_phase(pool_base, phase: str, args, trades=None):
     # what computes the microprice column), but its columns only enter the
     # FEATURE set for the phases that are meant to add them.
     #
-    # The old guard was `if fset != "levels"`, which is true for "grid" — so
+    # The old guard was `if fset != "levels"`, which is true for "grid", so
     # phase 2 already received the scalars phase 3 exists to add, and the
     # documented `phase3 - phase2` gap ("order-flow scalars") was structurally
     # zero: all six models printed identical numbers to four decimals. Each

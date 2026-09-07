@@ -61,7 +61,7 @@ def _to_3class(probs: np.ndarray, classes: np.ndarray) -> np.ndarray:
     """Reindex sklearn's probabilities onto the fixed [-1, 0, +1] basis.
 
     ``predict_proba`` returns one column per class PRESENT IN THE TRAINING
-    FOLD, in sorted order — not always three. With a sign deadband (``alpha``)
+    FOLD, in sorted order, not always three. With a sign deadband (``alpha``)
     a fold can contain no +1 rows at all, and sklearn then returns (N, 2).
     Consuming that directly is silently wrong: ``classification_metrics`` maps
     predictions with ``argmax − 1``, so column 1 would decode as class 0
@@ -84,7 +84,7 @@ def logistic_proba(Xtr, ytr_cls, Xte):
 
     Always returns three columns on the [-1, 0, +1] basis that
     ``classification_metrics`` decodes with (argmax − 1), even when a class is
-    absent from the training fold — see ``_to_3class``.
+    absent from the training fold. See ``_to_3class``.
     """
     from sklearn.linear_model import LogisticRegression
     m = LogisticRegression(max_iter=500, C=1.0)  # multinomial by default in sklearn ≥1.7

@@ -106,7 +106,7 @@ def main() -> int:
     med_wall = float(pool["fwd_dt_s"].median())
     # Embargo on the p99 realized horizon, NOT the median. With an event
     # horizon the realized wall-clock varies per row, and a median embargo
-    # leaves ~half of training labels straddling the test boundary — a real
+    # leaves ~half of training labels straddling the test boundary: a real
     # leak. horizon_sweep.py uses p99 for the same reason.
     embargo = max(float(np.nanpercentile(pool["fwd_dt_s"].to_numpy(), 99)), 1.0)
 
