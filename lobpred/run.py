@@ -53,11 +53,20 @@ def _build_phase(pool_base, phase: str, args, trades=None):
     else:  # grid-based sets
         pool, gcols = D.add_grid_features(pool, k=args.grid_k)
         feats = list(gcols)
-    # scalars carry microprice/ofi; add when requested OR when the target is
-    # microprice (which add_scalar_features computes).
-    if fset != "levels" or price_col == "microprice":
+    # `add_scalar_features` must RUN whenever the target is microprice (it is
+    # what computes the microprice column), but its columns only enter the
+    # FEATURE set for the phases that are meant to add them.
+    #
+    # The old guard was `if fset != "levels"`, which is true for "grid" — so
+    # phase 2 already received the scalars phase 3 exists to add, and the
+    # documented `phase3 - phase2` gap ("order-flow scalars") was structurally
+    # zero: all six models printed identical numbers to four decimals. Each
+    # phase must change exactly one thing, which is the whole premise of the
+    # staged table.
+    _WANTS_SCALARS = ("grid+scalar", "extended", "extended+trades")
+    if fset in _WANTS_SCALARS or price_col == "microprice":
         pool, scols = D.add_scalar_features(pool)
-        if fset != "levels":
+        if fset in _WANTS_SCALARS:
             feats += scols
     if fset in ("extended", "extended+trades"):
         pool, fcols = Fx.add_flow_features(pool)
@@ -90,12 +99,25 @@ def _run_fold(W, tr, te, feats, args):
     """Return (reg_metrics_by_model, cls_metrics_by_model) for one fold."""
     if args.subsample and len(tr) > args.subsample:
         rng = np.random.default_rng(args.seed)
-        tr = rng.choice(tr, size=args.subsample, replace=False)
+        # SORT the draw. train_torch carves its validation block off the TAIL
+        # (slice(n - n_val, n)) on the assumption that rows arrive in
+        # chronological order; an unsorted subsample interleaves val with train
+        # and turns a forward-in-time early-stopping signal into an
+        # i.i.d.-with-train one, which stops optimistically.
+        tr = np.sort(rng.choice(tr, size=args.subsample, replace=False))
     Xtr, Xte = W.X[tr], W.X[te]
     ytr, yte = W.y[tr], W.y[te]
     reg: dict[str, E.RegMetrics] = {}
     cls: dict[str, E.ClsMetrics] = {}
-    dl_models = [m for m in ("tcn", "deeplob", "attention") if m in args.models]
+    # Drive this from the registry, not a hardcoded tuple. The old list
+    # omitted `seqlstm` and `perlevel`, so `--models lgbm seqlstm` silently ran
+    # NO network at all and printed a tree-only table -- a reader would
+    # conclude "the tree wins" with nothing to compare against (Rule #0.5).
+    _known = {"tcn", "deeplob", "attention", "perlevel", "seqlstm", "lstm", "axial"}
+    unknown = [m for m in args.models if m not in _known | {"ridge", "lgbm", "logistic", "persistence", "majority"}]
+    if unknown:
+        raise ValueError(f"unknown model(s) {unknown}; see models.build_model")
+    dl_models = [m for m in args.models if m in _known]
 
     if "reg" in args.tasks:
         reg["persistence"] = E.regression_metrics(yte, B.persistence_predict(len(yte)))

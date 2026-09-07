@@ -9,8 +9,12 @@ that always predicts "stable", so we report several complementary views:
     big move counts more than on a tiny one).
   * 3-class **accuracy** and **macro-F1** for the sign head.
 
-The harness trains one model per walk-forward fold and averages, so a
-single lucky split can't carry a verdict.
+``run.py`` / ``analyze.py`` / ``target_study.py`` train one model per
+walk-forward fold and average. NOTE that the headline numbers in the README
+were produced by the research scripts, which use a SINGLE chronological
+split at the 0.66 quantile, one seed — so they are point estimates, not
+fold-averaged. Overlapping label windows also mean the effective sample is
+far below the row count; read the gaps between models, not the third decimal.
 """
 
 from __future__ import annotations

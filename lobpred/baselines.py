@@ -57,16 +57,39 @@ def lgbm_fit_predict(Xtr, ytr, Xte, **kw):
 # ── classification baselines (sign label) ───────────────────
 
 
+def _to_3class(probs: np.ndarray, classes: np.ndarray) -> np.ndarray:
+    """Reindex sklearn's probabilities onto the fixed [-1, 0, +1] basis.
+
+    ``predict_proba`` returns one column per class PRESENT IN THE TRAINING
+    FOLD, in sorted order — not always three. With a sign deadband (``alpha``)
+    a fold can contain no +1 rows at all, and sklearn then returns (N, 2).
+    Consuming that directly is silently wrong: ``classification_metrics`` maps
+    predictions with ``argmax − 1``, so column 1 would decode as class 0
+    instead of +1 and the +1 class becomes unreachable. No exception is
+    raised and accuracy/macro-F1 are quietly incorrect.
+
+    Mapping each column by its actual class label makes the basis explicit.
+    """
+    out = np.zeros((len(probs), 3), dtype=np.float64)
+    for j, c in enumerate(classes):
+        c = int(c)
+        if c not in (-1, 0, 1):
+            raise ValueError(f"unexpected sign class {c!r}; expected -1/0/+1")
+        out[:, c + 1] = probs[:, j]
+    return out
+
+
 def logistic_proba(Xtr, ytr_cls, Xte):
     """Multinomial logistic on snapshot features → class probabilities (N,3).
 
-    ``predict_proba`` columns follow sorted classes [-1, 0, +1], matching
-    the (argmax − 1) convention in ``classification_metrics``.
+    Always returns three columns on the [-1, 0, +1] basis that
+    ``classification_metrics`` decodes with (argmax − 1), even when a class is
+    absent from the training fold — see ``_to_3class``.
     """
     from sklearn.linear_model import LogisticRegression
     m = LogisticRegression(max_iter=500, C=1.0)  # multinomial by default in sklearn ≥1.7
     m.fit(last_step(Xtr), ytr_cls)
-    return m.predict_proba(last_step(Xte)), m
+    return _to_3class(m.predict_proba(last_step(Xte)), m.classes_), m
 
 
 def lgbm_cls_proba(Xtr, ytr_cls, Xte, **kw):
@@ -79,7 +102,7 @@ def lgbm_cls_proba(Xtr, ytr_cls, Xte, **kw):
     params.update(kw)
     m = lgb.LGBMClassifier(**params)
     m.fit(last_step(Xtr), ytr_cls)
-    return m.predict_proba(last_step(Xte)), m
+    return _to_3class(m.predict_proba(last_step(Xte)), m.classes_), m
 
 
 def majority_proba(ytr_cls, n: int) -> np.ndarray:

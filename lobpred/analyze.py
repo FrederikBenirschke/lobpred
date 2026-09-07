@@ -104,7 +104,11 @@ def main() -> int:
     pool = D.add_forward_target(pool, horizon_events=args.horizon_events, price_col="microprice")
     pool = D.add_sign_label(pool, alpha=args.alpha)
     med_wall = float(pool["fwd_dt_s"].median())
-    embargo = max(med_wall, 1.0)
+    # Embargo on the p99 realized horizon, NOT the median. With an event
+    # horizon the realized wall-clock varies per row, and a median embargo
+    # leaves ~half of training labels straddling the test boundary — a real
+    # leak. horizon_sweep.py uses p99 for the same reason.
+    embargo = max(float(np.nanpercentile(pool["fwd_dt_s"].to_numpy(), 99)), 1.0)
 
     folds = D.walk_forward_splits(pool["timestamp_ns"].to_numpy(), n_folds=args.n_folds, horizon_s=embargo)
     tr0, _ = folds[0]

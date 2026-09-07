@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import numpy as np
 
+import torch
+
 from lobpred import baselines as B
 from lobpred import dataset as D
 from lobpred import evaluate as E
@@ -81,9 +83,18 @@ def main() -> None:
     # (so the net optimizes in unit variance, then inverts), early-stops on a
     # chronological validation tail, and clips gradients.
     print("\n2) training PerLevelLOB (conv-across-levels + LSTM) ...")
+    # Seed BEFORE constructing: build_model initialises weights, and
+    # train_torch's own seeding happens later, so an unseeded init made this
+    # teaching script produce a different number on every run (measured: corr
+    # -0.063 then 0.000 on two identical invocations). Note the device matters
+    # too -- MPS kernels are not bit-reproducible, so this pins CPU for the
+    # walkthrough, where the run is seconds either way.
+    torch.manual_seed(0)
+    np.random.seed(0)
     mdl = M.build_model("perlevel", n_features=len(feats), seq_len=SEQ_LEN, out_dim=1)
     preds, mdl, hist = E.train_torch(
-        mdl, Xtr, ytr, Xte, E.TrainConfig(epochs=25, patience=6, lr=3e-4),
+        mdl, Xtr, ytr, Xte,
+        E.TrainConfig(epochs=25, patience=6, lr=3e-4, seed=0, device="cpu"),
         task="reg", collect_history=True,
     )
     print(f"   {'epoch':>5} {'train_loss':>11} {'val_loss':>10}")

@@ -202,3 +202,72 @@ def test_make_windows_stale_filters():
     # the mid-move guard needs a mid column — loud, not silent (Rule #0.5)
     with pytest.raises(KeyError):
         D.make_windows(pool.drop("mid"), feats, seq_len=8, min_window_mid_moves=1)
+
+
+def test_walk_forward_embargo_leaves_a_full_horizon_gap():
+    """No training label may straddle the test boundary.
+
+    This is the leakage guarantee every number in the README rests on, and it
+    had no test: `walk_forward_splits` was exercised by the suite but never
+    asserted on, so a regression here would invalidate every published result
+    while the suite stayed green.
+    """
+    ts = (np.arange(2000) * 1_000_000_000).astype(np.int64)
+    horizon_s = 10.0
+    folds = D.walk_forward_splits(ts, n_folds=4, horizon_s=horizon_s)
+    assert folds, "expected at least one fold"
+    for tr, te in folds:
+        assert ts[tr].max() < ts[te].min(), "train must precede test"
+        gap_ns = int(ts[te].min()) - int(ts[tr].max())
+        assert gap_ns >= horizon_s * D.NS_PER_S, (
+            f"train ends {gap_ns / 1e9:.1f}s before test; needs >= {horizon_s}s")
+
+
+def test_scaler_is_fit_on_train_rows_only():
+    """Perturbing TEST-row features must not move the scaler's statistics."""
+    pool = synthetic.generate_pool(n_markets=3, minutes=10, seed=5)
+    feats = ["mid"]
+    mask = np.zeros(pool.height, bool)
+    mask[: pool.height // 2] = True
+    before = D.fit_scaler(pool, feats, mask)
+    bumped = pool.with_columns(
+        pl.when(pl.int_range(pl.len()) >= pool.height // 2)
+        .then(pl.col("mid") + 1000.0)
+        .otherwise(pl.col("mid"))
+        .alias("mid"))
+    after = D.fit_scaler(bumped, feats, mask)
+    assert np.allclose(before.mean, after.mean), "test rows leaked into the mean"
+    assert np.allclose(before.std, after.std), "test rows leaked into the std"
+
+
+def test_forward_target_rejects_unsorted_timestamps():
+    """Unsorted input must raise, not yield silently wrong labels.
+
+    add_forward_target uses searchsorted, which requires ascending ts. Nothing
+    downstream would signal a violation — the labels would simply be wrong.
+    """
+    pool = synthetic.generate_pool(n_markets=2, minutes=10, seed=6)
+    flipped = pool.sort("timestamp_ns", descending=True)
+    try:
+        D.add_forward_target(flipped, avg_window_s=5.0, price_col="mid")
+    except ValueError as exc:
+        assert "not ascending" in str(exc)
+    else:
+        raise AssertionError("expected ValueError on unsorted timestamps")
+
+
+def test_class_probabilities_use_the_fixed_three_class_basis():
+    """A fold missing a sign class must still decode to [-1, 0, +1].
+
+    sklearn returns one column per class PRESENT in training. With a deadband
+    a fold can contain no +1 rows, giving (N, 2) — and classification_metrics
+    decodes with argmax-1, so column 1 would silently mean class 0 rather
+    than +1.
+    """
+    rng = np.random.default_rng(0)
+    Xtr = rng.standard_normal((200, 1, 4)).astype(np.float32)
+    Xte = rng.standard_normal((50, 1, 4)).astype(np.float32)
+    ytr = rng.choice([-1, 0], 200)          # the +1 class never appears
+    probs, _ = B.logistic_proba(Xtr, ytr, Xte)
+    assert probs.shape == (50, 3), f"expected 3 columns, got {probs.shape}"
+    assert np.allclose(probs[:, 2], 0.0), "absent class must carry zero mass"

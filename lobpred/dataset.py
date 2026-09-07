@@ -14,8 +14,10 @@ Canonical schema (one row per book update), produced by ``lobpred.data``:
 The six things this module guarantees
 -------------------------------------
 1. **Pooling.** Markets are pooled (a single market has too few rows to
-   train a deep model). ``market_id`` tags every row so a market never
-   straddles a train/test split.
+   train a deep model). ``market_id`` tags every row and travels through
+   to ``Windows``, but the split is purely temporal: markets are pooled
+   across the train/test boundary, and the same market appears on both
+   sides. See ``walk_forward_splits``.
 2. **Three feature sets, same rows.** ``add_paper_features`` (raw L-level
    px+size, the reference paper's inputs), ``add_grid_features`` (resting
    size on a fixed tick grid, comparable across instruments), and
@@ -87,7 +89,7 @@ def discover_book_parquets(roots: tuple[Path, ...]) -> list[Path]:
     out: list[Path] = []
     for r in roots:
         out.extend(p for p in Path(r).rglob("*.parquet")
-                   if p.parent.name != "_system" and not p.name.endswith(".trades.parquet"))
+                   if p.parent.name != "_system" and not p.name.endswith((".trades.parquet", ".staleness.parquet")))
     if not out:
         raise FileNotFoundError(f"no book parquets under {[str(r) for r in roots]}")
     return sorted(out)
@@ -390,6 +392,16 @@ def add_forward_target(
     smoothed mode). Uses a per-market ``searchsorted``/``cumsum``, never any
     backward rolling-window column.
     """
+    # searchsorted below REQUIRES ascending ts. load_pool sorts, but the joins
+    # in add_grid_features / add_activity_tier do not contract row order, so an
+    # unsorted frame would produce plausible-looking, silently wrong labels
+    # rather than an error. This is the leakage guarantee the whole study rests
+    # on; assert it rather than assume it.
+    if horizon_events is not None and max_stale_s is not None:
+        raise ValueError(
+            "max_stale_s has no meaning with horizon_events: the target is N "
+            "rows ahead, not an instant, so there is no 'too far past' to "
+            "reject. Filter on the returned fwd_dt_s instead.")
     modes = sum(x is not None for x in (horizon_s, horizon_events, avg_window_s))
     if modes != 1:
         raise ValueError("pass exactly one of horizon_s / horizon_events / avg_window_s")
@@ -405,6 +417,11 @@ def add_forward_target(
         ts = g["timestamp_ns"].to_numpy()
         px = g[price_col].to_numpy().astype(float)
         n = len(ts)
+        if n > 1 and not (np.diff(ts) >= 0).all():
+            raise ValueError(
+                f"timestamps not ascending for market {_mid!r}; sort by "
+                "(market_id, timestamp_ns) before add_forward_target — "
+                "searchsorted would otherwise return silently wrong labels")
         if avg_window_s is not None:
             win_ns = int(avg_window_s * NS_PER_S)
             csum = np.concatenate([[0.0], np.cumsum(px)])
@@ -420,6 +437,11 @@ def add_forward_target(
         if horizon_events is not None:
             idx = np.arange(n) + horizon_events
             valid = idx < n
+            # NOTE: `target_t = None` disables the max_stale_s filter below,
+            # because "too far past the target instant" has no meaning when the
+            # horizon is counted in EVENTS rather than time. Passing both is a
+            # caller error and is rejected up front (see the mode check), rather
+            # than silently ignoring a staleness bound the caller asked for.
             target_t = None
         else:
             target_t = ts + int(horizon_s * NS_PER_S)
@@ -549,6 +571,14 @@ def fit_scaler(pool: pl.DataFrame, feat_cols: list[str], train_mask: np.ndarray)
     Xtr = X[train_mask]
     mean = np.nanmean(Xtr, axis=0)
     std = np.nanstd(Xtr, axis=0)
+    # An all-null train column yields NaN stats, which the `std < 1e-12` guard
+    # below does NOT catch; make_windows' nan_to_num would then turn the whole
+    # feature into a silent constant 0. Fail loudly instead (Rule #0.5).
+    dead = ~np.isfinite(mean)
+    if dead.any():
+        bad = [c for c, d in zip(feat_cols, dead) if d]
+        raise ValueError(f"feature(s) {bad} are entirely null on the training "
+                         "rows; drop them or fix upstream")
     std = np.where(std < 1e-12, 1.0, std)  # guard constant features
     return Scaler(cols=list(feat_cols), mean=mean, std=std)
 
@@ -564,7 +594,9 @@ class Windows:
     y: np.ndarray             # (N,) float32, forward price change
     y_cls: np.ndarray | None  # (N,) int, sign label if present
     ts: np.ndarray            # (N,) int64, decision-time timestamp_ns
-    market_id: np.ndarray     # (N,) object, for group-aware splitting
+    market_id: np.ndarray     # (N,) object, carried for diagnostics/joins
+                              # (NOT used for splitting: see walk_forward_splits,
+                              #  which partitions on time alone)
     feat_cols: list[str] = field(default_factory=list)
 
 
