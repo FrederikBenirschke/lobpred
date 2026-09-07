@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      # The suite is deliberately runnable without torch: the deep models live
+      # behind the `deep` extra, and every test uses the synthetic generator,
+      # so CI needs no downloads and no GPU.
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
