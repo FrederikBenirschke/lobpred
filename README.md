@@ -1,125 +1,80 @@
-# lobpred: predicting short-horizon order-book moves on prediction markets
+# lobpred: short-horizon price prediction on prediction-market order books
 
 A prediction market trades contracts that pay one dollar if an event occurs and
 nothing otherwise, so each price lies in [0, 1] and behaves as the market's
 probability of that event. Kalshi and Polymarket maintain live limit order books
-for thousands of such contracts, covering NBA games, World Cup matches, and
-daily high-temperature settlements. This study asks whether the next few seconds
-of price movement are predictable from the current book, and what actually
-drives that prediction.
+for thousands of such contracts.
 
-Deep sequence models are widely reported to beat gradient-boosted trees on
-order-book data. This benchmark tests that claim while varying four things, not
-one: how the order book is **represented**, which **model** reads it, how far
-ahead the **horizon** looks, and which **price** is being predicted. The
-representations are a set of scale-free microstructure features (order-flow
-imbalance, book imbalance, relative depth) and the raw order book itself (bid
-and ask prices and sizes across five levels). The models are linear and tree
-baselines (ridge, lasso, LightGBM, logistic) and deep sequence networks (a TCN,
-DeepLOB, an axial-attention model, and an LSTM).
+`lobpred` asks whether the next few seconds of price movement are predictable
+from the current book, and benchmarks deep sequence models against gradient
+boosted trees on that question. It is a prediction study: it reports forecast
+quality, not trading PnL.
 
-One confound recurs in such comparisons and is controlled here throughout: a
-sequence network reads a window of history while a tree reads a single
-snapshot, so the tree is given the same window before any model is judged.
+The package covers the whole path. It loads order-book recordings into one
+schema, builds microstructure features, trains linear, tree and deep models on a
+shared target and split, and scores them. A synthetic generator with a planted
+signal and a loader for the public FI-2010 benchmark let every result run
+without private data.
 
-Of the four, the model class is the least important. Handing the tree the
-same 32-tick window closes almost the entire apparent gap between it and the
-best network. Meanwhile two settings that are
-usually inherited rather than measured, the prediction horizon and the choice
-of microprice versus mid as the predictand, each move the score further than
-swapping the model does. A study that fixes those two and sweeps only the
-architecture is measuring the smallest available effect.
+## What it finds
 
-> **The data.** This is a prediction study: it reports forecast quality, not
-> trading PnL. The primary corpus is 12.0M order-book events across 371 Kalshi
-> daily-temperature markets, recorded 2026-06-14 to 2026-09-04 and reduced to
-> one row per venue event. An earlier corpus of 923 markets across Kalshi and
-> PolymarketUS (MLB 138, NBA 63, tennis 71, WNBA 7, World Cup soccer 102, 172
-> daily-temperature, 26 other, plus 344 on PolymarketUS) is
-> retained for cross-corpus comparison and reported separately, since it
-> carries a known recorder defect described below. The raw recordings contain
-> trader usernames and stay out of the repository. The synthetic generator and
-> the FI-2010 loader reproduce every pipeline and result. The collected dataset
-> is available on request at benirschke.math@gmail.com.
+**Which price you predict matters more than which model you use.** Predicting
+the microprice scores roughly twice as high as predicting the mid on identical
+rows (0.53 against 0.22 for the best model). The microprice is the easier
+target because it is defined by the same touch sizes the features report, and it
+moves whenever those sizes move. It is also the less faithful one: against
+474,449 trade prints it is closer to the execution price than the mid on only
+40% of them. The mid number is the one to quote.
 
-## Summary
+**The prediction horizon matters more than the model.** Across 1 to 60 seconds
+the network's correlation falls from 0.58 to 0.44 while the tree stays nearly
+flat. Horizon sensitivity is a property of the sequence model rather than of the
+data, so a comparison run at one horizon can rank models differently than a
+swept one.
 
-The predictand matters more than the model. The literature's default target
-is the microprice, a size-weighted interpolation between the best bid and ask.
-Predicting it scores roughly twice as high as predicting the mid on the same
-rows (TCN 0.53 versus 0.22). That gap is not good news: microprice moves
-whenever the touch *sizes* move, with no trade and no change in either quoted
-price, so the book features that predict it include the sizes that define it.
-Checked against 474,449 actual trade prints, the microprice is closer to the
-execution price than the mid on only **40.15%** of them, below the 50% line a
-coin flip would give. It is the easier target and the worse description of
-where trading happens. The mid number is the defensible one.
+**Model class matters least.** Sequence models read a window of history while a
+tree reads a single snapshot. Give the tree the same 32-tick window and almost
+the whole apparent gap closes: LightGBM comes within 0.02 of the best network on
+microprice and matches it on mid.
 
-The horizon matters more than the model too. Sweeping 1 to 60 seconds, the
-network's correlation falls monotonically from 0.58 to 0.44; the inherited
-19-second horizon sits near the bottom of that range. Choosing 1 second instead
-would have bought more than the entire architecture comparison does. The tree,
-by contrast, is nearly flat across the same axis, so horizon sensitivity is a
-property of the sequence model rather than of the data.
-
-Model class has little effect once the inputs match. Given the same 32-tick
-window, LightGBM comes within 0.02 of the best network on microprice and ties
-it on mid (0.231 versus 0.234, a difference well inside the +/-0.0036
-run-to-run noise, so a tie in the sense of *unresolved*, not *proven equal*).
-The network leads only when the comparison grants it history the snapshot tree
-never receives. This reproduces on a second, independently recorded corpus with
-a different venue and instrument mix, which carries a known recorder defect
-(see Limitations), and on both predictands.
-
-Representation is the one lever that clearly pays. Adding the raw price and
-size ladder on top of the engineered features lifts every model, tree and
-network alike. The lift is not an artifact of the bounded [0, 1] price scale:
-scored within price-decile buckets, where the absolute price is roughly
-constant and cannot drive the result, 94% of it survives and it is positive in
-all ten deciles.
-
-Market selection follows price activity rather than quote count. A book that
-posts hundreds of quotes per minute while its mid price moves twice contributes
-noise, so the ranking uses the mid-move rate.
+**The input representation is the lever that pays.** Adding the raw price and
+size ladder on top of engineered features lifts every model, tree and network
+alike. The lift survives scoring within price-decile buckets, so it is not an
+artifact of the bounded [0, 1] price scale.
 
 ## Quickstart
 
 ```bash
 pip install -e ".[deep,plot,dev]"     # deep = torch; plot = matplotlib; dev = pytest
 
-# 1) generate a synthetic dataset with a known, modest, planted signal
+# generate a synthetic dataset with a known, modest, planted signal
 python -m lobpred.data.synthetic --out experiments/synthetic --n-markets 12 --minutes 120
 
-# 2) model comparison + feature-group importance
+# model comparison + feature-group importance
 KMP_DUPLICATE_LIB_OK=TRUE python -m lobpred.analyze \
     --roots experiments/synthetic --horizon-events 50
 
-# 3) the staged feature-comparison gap table (phases 4–5 add the extended + trade features)
+# the staged feature-comparison table: each phase adds one feature group
 KMP_DUPLICATE_LIB_OK=TRUE python -m lobpred.run \
     --roots experiments/synthetic --phases 0 1 2 3 4 5 --horizon 30
 
-#    feature-importance with the trade-tape families included
-KMP_DUPLICATE_LIB_OK=TRUE python -m lobpred.analyze \
-    --roots experiments/synthetic --horizon-events 50 --with-trades
-
-# 4) point-exit vs smoothed-hold target across horizons
+# point-exit vs smoothed-hold target across horizons
 KMP_DUPLICATE_LIB_OK=TRUE python -m lobpred.target_study \
     --roots experiments/synthetic --horizons 2 5 10 30
 
-# 5) diagnostic plots for one phase (loss/grad curves, error, attention pockets)
+# diagnostic plots for one phase (loss/grad curves, error, attention pockets)
 KMP_DUPLICATE_LIB_OK=TRUE python -m lobpred.diagnose \
     --roots experiments/synthetic --phase 3 --out experiments/diag
 
-# tests (no torch / no downloads needed)
+# tests (no torch, no downloads)
 pytest -q
 ```
 
-`KMP_DUPLICATE_LIB_OK=TRUE` is only needed because PyTorch and LightGBM
-both link libomp in one process.
+`KMP_DUPLICATE_LIB_OK=TRUE` is needed only because PyTorch and LightGBM both
+link libomp in one process.
 
-To run on the **FI-2010** benchmark instead, download it (search "FI-2010
-benchmark dataset", Ntakaris et al. 2018) and convert to the canonical
-schema:
+To run on the **FI-2010** benchmark, download it (Ntakaris et al. 2018) and
+convert to the canonical schema:
 
 ```python
 from lobpred.data import fi2010
@@ -127,7 +82,7 @@ fi2010.write_parquets("BenchmarkDatasets/.../*.txt", "experiments/fi2010")
 # then: python -m lobpred.analyze --roots experiments/fi2010 --horizon-events 50
 ```
 
-## Data: one canonical schema
+## Data
 
 Every module reads one contract, a single row per book update:
 
@@ -137,170 +92,127 @@ bid_price, bid_size, ask_price, ask_size, mid, spread,
 bids_price, bids_size, asks_price, asks_size   # lists, L levels each
 ```
 
-Every feature family is built on the same rows, so they compare on equal
-footing. The first three form the base set; the rest are stationary extensions
-(`features.py`). Every family except **levels** is price-invariant, which permits
-pooling across instruments.
+Anything that can be put in this shape works, so the same pipeline runs on the
+synthetic generator, on FI-2010, and on live venue recordings.
+
+The results below come from live Kalshi and Polymarket order books: 12.0M book
+events across 371 daily-temperature markets recorded over three months, and an
+earlier 923-market recording spanning sports and weather. The raw recordings
+contain trader usernames and stay out of the repository; the collected dataset
+is available on request at benirschke.math@gmail.com.
+
+## Features
+
+Feature families are built on the same rows, so they compare on equal footing.
+Every family except **levels** is price-invariant, which permits pooling across
+instruments.
 
 | family | builder | what it is |
 |---|---|---|
-| **levels** | `add_paper_features` | raw L-level px+size (non-stationary; reference paper inputs) |
-| **grid** | `add_grid_features` | resting size on a **fixed tick grid** from touch, comparable across instruments |
-| **scalar** | `add_scalar_features` | OFI, L1/3/5 order-book imbalance (OBI), micro-gap, spread |
-| **flow (A)** | `add_flow_features` | rolling OFI (1/5/30 s + 10/50-event) + multi-level OFI (L2–L3) + **rolling OBI** (smoothed L1 book imbalance) |
-| **history (B)** | `add_history_features` | lagged microprice returns (event + time) + realized vol |
-| **shape (C)** | `add_shape_features` | queue concentration, depth log-ratio, **log resting depth (volume)**, deeper micro-gaps (L3/L5), L10 imbalance |
-| **trade (D)** | `add_trade_features` | TFI, trade intensity, **traded volume**, VWAP−mid, **Amihud illiquidity** over 5/30 s (needs a trade stream) |
-| **activity/spread (E)** | `add_activity_spread_features` | **mid-change count** & update count over last 1/5/30 s + **rolling spread mean / volatility** + **relative spread** (spread/mid) |
-| **impact (F)** | `add_impact_features` | order-flow decomposition (**limit-add / cancel intensity** from book diffs) + rolling **Kyle-λ** price impact (Δmid on OFI) |
-| **smoothed (G)** | `add_smoothed_features` | time-aware **EWMA** of micro-gap, OBI, OFI, depth-normalized OFI (irregular-time `ewm_mean_by`; smoother + horizon-matched vs the hard rolling windows) |
+| **levels** | `add_paper_features` | raw L-level price + size (non-stationary; the reference paper's inputs) |
+| **grid** | `add_grid_features` | resting size on a fixed tick grid from touch |
+| **scalar** | `add_scalar_features` | order-flow imbalance, book imbalance at L1/3/5, micro-gap, spread |
+| **flow (A)** | `add_flow_features` | rolling and multi-level order-flow imbalance, smoothed book imbalance |
+| **history (B)** | `add_history_features` | lagged returns (event and time) + realized volatility |
+| **shape (C)** | `add_shape_features` | queue concentration, depth log-ratio, resting depth, deeper micro-gaps |
+| **trade (D)** | `add_trade_features` | trade-flow imbalance, intensity, volume, VWAP−mid, Amihud illiquidity |
+| **activity (E)** | `add_activity_spread_features` | mid-change and update counts, rolling spread mean and volatility |
+| **impact (F)** | `add_impact_features` | limit-add and cancel intensity from book diffs, rolling Kyle-λ |
+| **smoothed (G)** | `add_smoothed_features` | time-aware EWMA of micro-gap, imbalance and order flow |
 
-A/B/C/E/F/G read the book only and run by default in `analyze` and
-`target_study`; D needs the trade tape (`--with-trades`, requires
-`*.trades.parquet`; the synthetic generator emits one, FI-2010 has none). Every
-feature looks backward through the same searchsorted/cumsum idiom as the forward
-target, so no window peeks past `t`. `mid_moves_{w}s` counts realized price
-changes per row, the per-row version of the discovery axis that drives activity
-tiering.
+All families read the book only, except **trade (D)**, which needs a trade tape
+(`--with-trades`). Every feature looks backward through the same idiom as the
+forward target, so no window sees past `t`.
 
 ### Fixed grid over rank-based levels
 
-Instruments differ in book geometry. One packs 5 levels into 4 ticks; another
+Instruments differ in book geometry: one packs 5 levels into 4 ticks, another
 spreads them over 18. "Level 3" then sits at a different price distance on each,
-so ranking by level teaches the model which instrument it sees.
-`add_grid_features` records resting size at a fixed tick-offset from touch, so
-offset `o` marks the same price distance everywhere and a "pocket" becomes a
-nonzero bucket at a set offset.
+so ranking by level teaches the model which instrument it is looking at.
+`add_grid_features` records resting size at a fixed tick offset from touch, so
+the same offset means the same price distance everywhere.
 
-## Methodology
+## How it works
 
-### Guarding against lookahead
+### Targets
 
-Three rules keep future information out of the training data:
+Two forms of forward move, both computed strictly forward of `t`: a **point**
+move, `price(t+h) − price(t)`, and a **smoothed** move, the average price over
+the hold minus the price at `t`. Either can be measured against the mid or the
+microprice, and either can use a time horizon or an event horizon.
 
-- **The target is computed forward.** It is never taken from a backward-looking
-  window. Two forms are used: a point move, `price(t+h) − price(t)`, and a
-  smoothed move, `mean(price over (t, t+h]) − price(t)` (the average price over
-  the hold). Every price entering the target falls after `t`, so neither form
-  can observe its own outcome.
-- **Normalization is fit on the training set only.** The z-score statistics are
-  estimated on the train rows and then applied to the test rows.
-- **The split is by time, with an embargo.** Train and test are separated by
-  wall-clock time, and a gap of at least one horizon is removed on each side of
-  the boundary so no label straddles it (the purged walk-forward split of López
-  de Prado). The split is purely temporal: markets are pooled across the
-  boundary, so a market that trades on both sides of it appears in train and
-  test alike. That is the intended design, since the question is whether the
-  next few seconds are predictable rather than whether skill transfers to
-  unseen markets, but it means these numbers do not bound cross-market
-  generalization.
+The harness trains two heads. The regression head predicts the forward change
+and is scored on correlation and sign-hit rate. The three-class sign head reports
+accuracy and macro-F1 for comparison with the published literature.
 
-### Measuring activity by real price moves
+### Splits
 
-A market is active when its price actually moves. `add_activity_tier` ranks
-markets by `mid_moves_per_min`, the number of genuine mid-price changes, and
-ignores `updates_per_min`, which only counts quotes being posted and pulled. A
-book that posts 500 quotes a minute while its mid moves twice contributes mostly
-noise. Ranking by quote count carries that noise into every downstream result,
-so the ranking uses real price moves instead.
+Train and test are separated by wall-clock time, with a gap of at least one
+horizon removed on each side of the boundary so no label straddles it.
+Normalization statistics are fit on training rows only.
 
-### Adding features one group at a time
+The split is purely temporal, so a market that trades on both sides of the
+boundary appears in both. That is the intended design, since the question is
+whether the next few seconds are predictable rather than whether skill transfers
+to unseen markets, but it means these numbers say nothing about cross-market
+generalization.
 
-`run.py` builds up the feature set in stages and reports the change in score at
-each step: `phase1−phase0` (microprice target), `phase2−phase1` (fixed grid vs.
-raw levels), `phase3−phase2` (order-flow scalars), `phase4−phase3` (flow
-dynamics + returns/volatility + book shape + activity/spread), `phase5−phase4`
-(trade tape), plus deep vs. simple model within each stage. The step-by-step
-changes are the result of interest: absolute scores move with the fold, but the
-differences between consecutive stages hold steady.
+### Market selection
 
-### Two prediction targets
+A market is interesting when its price actually moves. Markets are ranked by
+mid-price changes per minute rather than by quote count: a book that posts 500
+quotes a minute while its mid moves twice contributes mostly noise.
 
-The harness trains two output heads, which fail in different ways. The
-regression head predicts the forward price change and is scored on correlation
-and hit-rate; R² is left out, since cross-fold regime shift dominates it. The
-three-class sign head reports accuracy and macro-F1 for comparison with the
-published literature. The regression target is standardized for the neural
-networks and the predictions are mapped back to price units afterward, which
-keeps outputs in range. DeepLOB needs a LayerNorm before its LSTM and gradient
-clipping, otherwise its gradient norm blows up to ~1e17; the code documents both
-fixes.
+### Models
 
-## Results (development dataset)
+Baselines are ridge, LightGBM and multinomial logistic, all reading a
+single snapshot unless given a flattened window. The sequence models are:
 
-These numbers come from the development data: live Kalshi and PolymarketUS
-order books (the raw recordings stay private). The synthetic and FI-2010 paths
-reproduce the pipeline and the qualitative conclusions.
+- **TCN** — dilated causal convolutions over the feature window.
+- **DeepLOB** — the Zhang–Zohren–Roberts CNN-LSTM: convolutions across price
+  levels, then an inception block, then an LSTM over time.
+- **AxialAttentionLOB** — attention along the time and level axes separately.
+- **PerLevelLOB** — convolves across levels then runs an LSTM, on a per-level
+  stationary tensor rather than raw prices.
+- **SeqLSTM** — a plain LSTM, as a no-pooling control.
 
-**Primary corpus.** 11,962,182 book events, 371 Kalshi daily-temperature
-markets, 2026-06-14 to 2026-09-04. One row per venue event: Kalshi's protocol
-emits one message per price level and the client re-emits the whole ladder
-after each, so raw rows over-count events by ~1.28x and are collapsed on the
-venue's own event stamp. Markets are the 400 most price-active by mid-move
-rate, capped at 12M rows. **The corpus is single-venue.** PolymarketUS is
-present in the recording but no PolyUS market survived the activity cut, so
-every cross-corpus comparison below is confounded with the venue mix.
+Regression targets are standardized for the networks and mapped back to price
+units afterward. DeepLOB needs a LayerNorm before its LSTM and gradient
+clipping to train stably.
 
-**Protocol.** Single chronological split at the 66th percentile, train-only
-z-scoring, embargo equal to the label horizon, 400,000 train and ~447,000 test
-windows, sequence length 32. Scored on correlation and sign-hit; R² is omitted
-because cross-fold regime shift dominates it.
+## Results
 
-**How precise are these numbers? +/-0.0036.** Every table below is a single
-split with a single seed. Re-running the same configuration across 5 seeds
-(varying the window subsample and the train/test draw) gives sd **0.0036**,
-range **0.0087**, on the snapshot-LightGBM eng+raw cell. **Differences below
-~0.007 are not distinguishable from run-to-run noise**, so read Finding 3's
-mid-target "tie" (-0.003) as unresolved rather than as a demonstrated equality,
-while its microprice gap (-0.021, ~6 sd) is a real ordering.
+Measured on 12.0M book events across 371 live markets, with a chronological
+split, 400,000 train and ~447,000 test windows, sequence length 32.
 
-No confidence intervals are computed anywhere in this study, and that is a real
-limitation rather than an oversight: the 19-second forward-average label windows
-overlap heavily, so consecutive rows share almost their entire label and the
-effective sample is far below the ~447,000 row count. A naive CI on that row
-count would be roughly an order of magnitude too tight. The honest estimator is
-a block bootstrap over markets or market-days; it has not been run.
+Re-running one configuration across five seeds gives a standard deviation of
+0.0036, so differences below about 0.007 are not distinguishable from run-to-run
+noise.
 
-**Read correlation with care on this corpus.** The forward-return distribution
-has excess kurtosis 55.5: the middle 50% of moves span ±0.0014 while the 1st
-and 99th percentiles are ±0.088, a factor of 60. Nearly all the variance sits
-in a small fraction of rows, so correlation is largely a statement about the
-model's grip on rare large moves. Where correlation and hit-rate disagree, the
-hit-rate is the more robust comparison.
-
-### Finding 1: the predictand outranks the model
+### Predictand
 
 Same rows, same features, same split; only the predicted price changes.
-19-second forward-average target, 35 features.
 
 | predictand | ridge | LightGBM | TCN |
 |---|---|---|---|
 | microprice | 0.250 | 0.454 | **0.528** |
 | mid | 0.179 | 0.170 | **0.221** |
 
-Microprice scores roughly twice the mid on every model. Two mechanisms are
-consistent with that and this test does not separate them: microprice may be
-partly *self*-predictable, since it is an interpolation weighted by the very
-touch sizes the features report, and moves whenever those sizes move without
-any trade; or the mid may simply be harder, since it only changes when a price
-level clears.
+Microprice scores roughly twice the mid on every model. It is an interpolation
+between bid and ask weighted by the touch sizes, so it moves whenever those
+sizes move, with no trade and no price level clearing — and the features that
+predict it include the sizes that define it.
 
-What settles the practical question is a separate measurement. Joining 474,449
-distinct trade prints to the book state at the same millisecond (2,353,064
-joined rows, since one trade matches several book rows sharing its
-millisecond), the microprice is closer to the actual execution price than the
-mid on **40.15%**, below the 50% no-information line. It wins only where the
-spread is 0-2 ticks, which is 3.3% of prints; half of all prints occur at
-spreads of 8 ticks or more. Microprice is an equity-microstructure construct
-being applied to a book that does not look like an equity book.
+Whether that makes it the right target is a separate question. Joining 474,449
+trade prints to the book state at the same millisecond, the microprice is closer
+to the actual execution price than the mid on 40.15% of them, below the 50%
+no-information line. It wins only where the spread is 0-2 ticks, which is 3.3%
+of prints, while half of all prints occur at spreads of 8 ticks or more.
 
-So the higher number is measured against the less faithful target. **Quote the
-mid result.**
+### Horizon
 
-### Finding 2: the horizon outranks the model
-
-Correlation against forward horizon, 35 features, both predictands. Time
-horizons use the forward-average target; event horizons use a point change.
+Correlation against forward horizon. Time horizons use the smoothed target,
+event horizons a point change; compare within an axis, not across.
 
 | horizon | microprice: ridge / lgbm / tcn | mid: ridge / lgbm / tcn |
 |---|---|---|
@@ -313,30 +225,17 @@ horizons use the forward-average target; event horizons use a point change.
 | 50 ev | 0.212 / 0.352 / 0.407 | 0.175 / 0.120 / 0.190 |
 | 100 ev | 0.215 / 0.344 / 0.383 | 0.180 / 0.126 / 0.167 |
 
-The network decays monotonically along the time axis while **LightGBM is nearly
-flat** (0.441 to 0.459 across the whole sweep). Horizon sensitivity is therefore
-a property of the sequence model, not of the corpus, which also means a
-single-horizon comparison can rank models differently than a swept one.
+The network decays monotonically along the time axis while LightGBM is nearly
+flat. On mid at 60 seconds the network (0.126) falls below ridge (0.183).
 
-The 19-second horizon used in the tables below was inherited, not chosen. It is
-not a maximum: 1 second scores +0.049 higher on microprice, and the mid target
-peaks at 5 seconds. On mid at 60 seconds the network (0.126) falls *below*
-ridge (0.183), losing its advantage entirely.
+Shorter is not automatically better: the smoothed target averages fewer ticks at
+a short horizon and is noisier per observation, and a 1-second horizon is not
+reachable by a strategy that has to cross a spread.
 
-Shorter is not automatically better. The target is a forward average, so a
-shorter window averages fewer ticks and is noisier per observation even as
-correlation rises, and a 1-second horizon is not reachable by a strategy that
-must cross a spread. The point is narrower: the horizon axis carries more
-signal than the model axis, and it is usually not swept.
+### Lookback against architecture
 
-Event horizons sit uniformly below time horizons because a forward average is
-smoother than a point change. Compare within an axis, never across.
-
-### Finding 3: with matched inputs, the tree catches the network
-
-The apparent architecture gap is an input-width gap. Below, the tree is given
-progressively more of what the network already sees; "flattened" hands it all
-32 ticks as 1,120 features.
+The tree is given progressively more of what the network already sees.
+"Flattened" hands it all 32 ticks as 1,120 features.
 
 | view | microprice | mid |
 |---|---|---|
@@ -348,248 +247,134 @@ progressively more of what the network already sees; "flattened" hands it all
 | *flattened − snapshot* | *+0.046* | *+0.082* |
 | *best flattened − TCN* | *−0.021* | *−0.003* |
 
-Lookback is worth more than architecture: handing the tree the window buys
-+0.046 and +0.082, while the residual model-class gap is −0.021 and −0.003. On
-the mid target the two are a **tie**.
+Lookback buys +0.046 and +0.082; the residual model-class gap is −0.021 and
+−0.003. The larger tree is no better than the smaller one, so the flattened tree
+is not capacity-starved. The flattened tree on engineered features alone stays
+far below the flattened tree with the raw book, so lookback and representation
+are complements rather than substitutes.
 
-This reproduces the same test on the earlier 923-market corpus (snapshot 0.454,
-flattened 0.504, TCN 0.499) across a different venue mix and a second
-predictand. The larger tree is no better than the smaller one, so the flattened
-tree is not capacity-starved. And the flattened tree on engineered features
-alone (0.308 / 0.113) stays far below the flattened tree with the raw book, so
-lookback and representation are complements, not substitutes.
+### Representation
 
-### Finding 4: the raw book lifts every model, and the lift is real skill
-
-19-second forward-average microprice change, 371 markets, single split.
+19-second smoothed microprice change, 371 markets.
 
 | model | engineered (15) | + raw book (35) | lift |
 |---|---|---|---|
 | ridge | 0.204 | 0.247 | +0.043 |
-| lasso | 0.204 | 0.246 | +0.042 |
 | LightGBM | 0.254 | 0.449 | +0.195 |
 | TCN | 0.306 | **0.533** | +0.227 |
 | DeepLOB | 0.301 | 0.354 | +0.053 |
-| attention | 0.278 | **0.533** | +0.255 |
-| LSTM | 0.261 | 0.446 | +0.185 |
 
-A bounded [0, 1] price drifts back toward the interior on its own, so some of
-this lift could be mechanical reversion rather than skill. Scored within price
-deciles, where the absolute price is roughly constant and cannot drive the
-result, the lift survives: **+0.179 of the +0.191 pooled** (94%), positive in
-all ten deciles. On the mid target it is smaller and noisier (+0.085 within
-buckets against +0.064 pooled, positive in eight of ten) but still not a
-price-level artifact.
+Scored within price-decile buckets, where the absolute price is roughly constant
+and cannot drive the result, 94% of the lift survives and it is positive in all
+ten deciles. On the mid target it is smaller and noisier but still positive in
+eight of ten.
 
-One caveat the correlation column hides: on **hit-rate** the raw book is a
-slight *loss* for most models (TCN 0.704 to 0.679) even as correlation rises
-sharply. Given kurtosis 55.5, that is the expected signature: the raw book buys
-grip on the large moves that dominate the variance, at a small cost to the sign
-of the typical small move. Three-class accuracy rises across the board (TCN
-0.543 to 0.591), which points the same way. "Raw helps" is therefore
-metric-dependent, and this is a narrower claim than a correlation table alone
-suggests.
+### Per-market spread
 
-Ridge and lasso agree to three decimals on the engineered set (0.204 / 0.204).
-The two were run precisely to separate joint shrinkage from variable selection
-across five collinear levels; that they land identically indicates the deeper
-levels carry no signal a linear model can isolate from level one.
+Pooled correlation averages markets that differ by more than 2x. On the earlier
+923-market corpus LightGBM scored 0.56 on tennis, 0.36 on weather and 0.23 on
+NBA. A model trained on one segment matches the pooled model on that segment's
+own test windows, so pooling heterogeneous markets costs nothing; the low
+aggregate is an average of one easy segment and several hard ones.
 
-### Finding 5: pooled correlation hides a large per-market spread
+### Further results
 
-On the earlier 923-market corpus, pooled correlation (0.33 tree, 0.28 net)
-averages segments that differ by more than 2x: LightGBM scores 0.56 on tennis,
-0.36 on weather, and 0.23 on NBA. A model trained on one segment matches the
-pooled model on that segment's own test windows, so pooling heterogeneous
-markets costs nothing. The low aggregate is an average of one easy segment and
-several hard ones, not evidence of interference.
+Measured on the earlier 923-market corpus:
 
-### Findings from the earlier corpus
-
-These predate the current corpus and are retained because they are not
-superseded by it, only rescoped. They were measured on the 923-market
-Kalshi + PolymarketUS recording, whose known defect is described under
-Limitations.
-
-**The target specification beats the model.** LightGBM correlation, point exit
-versus smoothed hold:
-
-| hold W | point | smoothed |
-|---|---|---|
-| 2 s | 0.296 | 0.339 |
-| 5 s | 0.268 | 0.394 |
-| 10 s | 0.245 | **0.407** |
-| 30 s | 0.220 | 0.390 |
-
-The point exit decays with horizon; the smoothed hold peaks near 10 s. Moving
-from point to smoothed at 10 s adds 0.16 correlation while the tree-network gap
-is 0.13. This is the same lesson Findings 1 and 2 reach from two other
-directions: target and horizon choices dominate architecture choices.
-
-**A frequently cited 71% three-class accuracy is a class-balance artifact.**
-Balancing the majority "stable" class in train and test drops accuracy to
-0.44-0.50, consistent with the same source's reported Up/Down F1 of about 0.50.
-On directional metrics the gap between models stays small. This is a
-cross-dataset comparison with a different label deadband, so the transferable
-part is the accuracy collapse under balancing, not the exact figure.
-
-**The signal concentrates in the spread and micro-gap.** Feature-group
-permutation importance on the base feature set (grid + scalars, 46 features,
-~185-198 markets) gave Δcorr 0.177 for spread/micro-gap against 0.013 for
-imbalance, ~0.010 for grid depth and −0.001 for OFI. At five levels the
-depth-"pocket" thesis fails the permutation test, reported here as a negative
-result. This ran on the base feature set and an earlier market selection, so it
-is not directly comparable to the tables above; it has not been re-run on the
-current corpus.
-
-**Per-market normalization destroys the raw signal.** A per-market expanding
-z-score drops raw-feature correlation from 0.470 to 0.324, because centering
-each market removes the absolute price level, which carries cross-market
-information. Global normalization is correct for raw features. An earlier
-conclusion that "raw lifts only the tree" came from this normalization choice
-combined with testing only an LSTM.
-
-**Scale alone does not rescue the network on engineered features.** From 300K
-to 2M windows the LSTM moved 0.262 to 0.278 while the tree moved 0.323 to
-0.330; the gap held near 0.05 across 8.7x more data. This is scoped to the
-LSTM on engineered features. Finding 3 shows the picture changes once the
-input is raw and the model is a TCN.
-
-**Stacking the network into the tree adds nothing.** A frozen network's
-prediction contributed +0.004 correlation and its 128-dimensional embedding
-+0.001, so the network's representation holds nothing the tree cannot reach
-from the same window.
+- **Target shape beats the model.** A smoothed hold reaches 0.407 correlation
+  against 0.245 for a point exit at the same 10-second horizon, a wider gap than
+  between any two models.
+- **A frequently cited 71% three-class accuracy is a class-balance artifact.**
+  Balancing the majority "stable" class drops it to 0.44-0.50, consistent with
+  the same source's reported Up/Down F1 of about 0.50.
+- **The signal concentrates in the spread and micro-gap.** Permutation
+  importance gives Δcorr 0.177 for spread and micro-gap against 0.013 for
+  imbalance and −0.001 for order-flow imbalance. At five levels the depth-pocket
+  thesis fails the test.
+- **Per-market normalization destroys the raw signal**, dropping correlation
+  from 0.470 to 0.324: centering each market removes the absolute price level,
+  which carries cross-market information.
+- **Scale alone does not rescue the network on engineered features.** From 300K
+  to 2M windows the LSTM moved 0.262 to 0.278 and the tree 0.323 to 0.330.
+- **Stacking the network into the tree adds nothing:** a frozen network's
+  prediction contributed +0.004 correlation and its embedding +0.001.
 
 ## Modules
 
 ```
 lobpred/
-  dataset.py        load + pool + base features + leak-safe targets + activity tiers + windows + walk-forward + trade loader
-  features.py       extended families A–G + add_perlevel_features (per-level stationary (T,L,C) tensor for DL)
+  dataset.py        load, pool, base features, forward targets, activity tiers, windows, splits
+  features.py       extended feature families + per-level tensor for the deep models
   baselines.py      persistence / ridge / lgbm / logistic / majority
-  models.py         TCN, DeepLOB, AxialAttentionLOB, PerLevelLOB (conv-across-levels + LSTM), SeqLSTM (no-pool control)
-  evaluate.py       prediction metrics (corr/hit/acc/F1) + the torch training loop + gap tables
-  diagnostics.py    training-curve / error-analysis / attention-pocket plots
+  models.py         TCN, DeepLOB, AxialAttentionLOB, PerLevelLOB, SeqLSTM
+  evaluate.py       metrics + the torch training loop + gap tables
+  diagnostics.py    training-curve, error-analysis and attention plots
   analyze.py        model comparison + feature-group importance
-  run.py            the staged feature-comparison gap table (phases 0–5)
+  run.py            the staged feature-comparison table
   target_study.py   point vs smoothed target across horizons
   diagnose.py       train one phase with history, write plots
-  microstructure.py vendored: microprice / imbalance / depth
-  ofi.py            vendored: Cont/Kukanov order-flow imbalance
+  microstructure.py microprice / imbalance / depth
+  ofi.py            Cont-Kukanov order-flow imbalance
   data/
-    synthetic.py    self-contained generator (book + aligned trade tape) with a planted signal (tested)
+    synthetic.py    self-contained generator with a planted signal
     fi2010.py       loader for the public FI-2010 benchmark
 examples/
-    deeplob_walkthrough.py   teaching script: per-level tensor → PerLevelLOB → vs lgbm
-    regime_scaling.py        deep vs tree as training size grows (the scale axis of the regime boundary)
+  deeplob_walkthrough.py   per-level tensor -> PerLevelLOB -> comparison to LightGBM
+  regime_scaling.py        deep vs tree as training size grows
 ```
 
-### Learning deep learning on the LOB
+`examples/deeplob_walkthrough.py` runs the deep-learning path end to end in
+about a minute on synthetic data, with no downloads.
 
-`examples/deeplob_walkthrough.py` shows the mechanics in one script:
-synthetic book → **per-level stationary tensor**
-(`add_perlevel_features`: OBI/OFI/rel-size per level) → **PerLevelLOB**
-(convolves across levels + LSTM over time, the DeepLOB/Kolm representation)
-→ training curve → comparison to LightGBM. Runs in ~1 min, no downloads.
+## Where deep learning wins
 
-A network trains stably on ~10⁵ windows, generated in seconds. More data alone
-does not rescue the network on engineered features.
-`examples/regime_scaling.py` sweeps the training size and compares SeqLSTM
-against LightGBM on the same features, target, and walk-forward split:
+DeepLOB reports F1 ≈ 0.83 at the shortest horizon on FI-2010, ahead of the
+classical baselines in that paper. Its CNN learns features off the raw 10-level
+ladder that hand-engineered scalars discard, and a tree discards them too. Two
+caveats: FI-2010's baselines are linear and TABL networks, so no gradient-boosted
+tree was tuned against DeepLOB there, and it comes from a different venue at a
+different scale.
 
-| train N | LightGBM | SeqLSTM | gap (tree − net) |
-|---|---|---|---|
-| 10 K | 0.501 | **0.511** | −0.011 |
-| 40 K | 0.520 | 0.515 | +0.005 |
-| 160 K | 0.526 | 0.515 | +0.010 |
-| 640 K | 0.527 | 0.515 | +0.012 |
-| 1.7 M | 0.528 | 0.507 | +0.021 |
+That maps a regime over input representation, scale and depth rather than a
+head-to-head on one dataset:
 
-(corr on the held-out fold; SeqLSTM is a 2-seed ensemble; the synthetic signal
-is planted, so the trend matters more than the level.) The network leads at 10 K.
-As data grows, the tree keeps improving while the network plateaus, so the gap
-moves the wrong way for "DL just needs scale." Engineered features leave the
-network nothing extra to learn, and the new rows sharpen the tree.
+- **Engineered features at medium scale** (here): a snapshot tree matches or
+  beats the sequence networks, and more data widens the tree's lead.
+- **Raw book at large scale and depth** (FI-2010): the CNN-LSTM earns its keep
+  on 10-level input.
 
-### The regime boundary
+This venue's books sit between the two: the raw book lifts every model, but at
+five levels and this scale no network pulls ahead of a tree given the same
+input.
 
-Deep learning wins on the other axis: raw book input at large scale. DeepLOB
-(Zhang, Zohren, Roberts) reports F1 ≈ 0.83 at the shortest horizon on FI-2010,
-ahead of the classical baselines in that paper. Its CNN learns features off the
-raw 10-level price/size ladder that hand-engineered scalars discard, and a tree
-discards them too. Two caveats keep this honest. FI-2010's baselines are linear
-and TABL nets, so no GBDT was tuned against DeepLOB there. FI-2010 also comes
-from a different venue at a different scale. It maps a regime over input
-representation, scale, and signal richness, not a head-to-head on one dataset.
+## Limitations
 
-The map has two cells:
-
-- engineered features at medium scale (here): a snapshot tree matches or beats
-  the sequence nets, and extra data widens the tree's lead. Switch to the raw
-  book with matched inputs and the tree and the best net tie instead.
-- raw book at large scale and depth (FI-2010): the CNN-LSTM earns its keep on
-  10-level input that this venue's 5-level books cannot supply.
-
-This venue's data sits between the cells: the raw book lifts every model, but at
-five levels and this scale no net pulls ahead of a tree with the same input.
-
-## Honest limitations
-
-- **No confidence intervals, anywhere.** Every number is a single split and a
-  single seed. Measured run-to-run variation is sd 0.0036 (range 0.0087), so
-  differences below ~0.007 are noise. Worse, the label windows overlap heavily,
-  so the effective sample is far below the row count and even a naive CI would
-  be far too tight. The honest estimator is a block bootstrap over markets or
-  market-days, which has not been run. The neural rows are single-seed, so the
-  60-second collapse in Finding 2 may be an optimization failure rather than a
-  result.
-- **The horizon sweep confounds horizon with target smoothing.** The forward
-  average is taken over the horizon itself, so as the horizon grows the target
-  becomes smoother and its variance composition changes. Finding 2's decay
-  therefore cannot separate "the network degrades at long horizons" from "the
-  network is worse at heavily-averaged targets". The discriminating run, the
-  same sweep with a point target, has not been done.
-- **No costed backtest has run.** Every number here is forecast quality against
-  a price change, not PnL. The spread on this book is wide, with half of all
-  trade prints occurring at 8 ticks or more, so a taker signal would likely
-  lose most of
-  this to the spread. Nothing here is evidence of a tradeable edge, and the
-  discriminating test (enter at ask, exit at bid, net of fees) is not run.
-- **Correlation is tail-decided on this corpus.** Excess kurtosis is 55.5, so
-  correlation mostly measures the model's grip on rare large moves. Hit-rate is
-  the more robust statistic, and the two disagree in places, notably the raw
-  book, which raises correlation while slightly lowering hit-rate.
-- **The primary corpus is single-venue.** PolymarketUS is in the recording but
-  no PolyUS market survived the activity cut, so cross-corpus comparisons are
-  confounded with venue mix, instrument type and date range simultaneously.
-- **Why the corpus changed.** The earlier 923-market recording carries a
-  reconnect defect: the socket watchdog stamped liveness only from data frames,
-  so quiet sockets were killed roughly every 100 seconds (one shard 237 times in
-  a single session). Fixed three months after those recordings were made, and
-  not repairable from the tape. Its numbers are reported separately for that
-  reason, not merged.
-- **A clock bug preceded both corpora.** The recorded parquet carried two
-  timestamp columns both populated from the *receive* clock, while one was named
-  for the venue clock. Since Kalshi frames from one engine event share a venue
-  timestamp and differ in receive time by microseconds, any grouping on that
-  column grouped nothing. Both corpora were re-derived from the raw tape after
-  the fix; every number here postdates it.
-- **The 60-second collapse on mid is undiagnosed.** The network falls to 0.126,
-  below ridge's 0.183. Either a real regime change or an optimization failure in
-  that cell; one seed, not investigated.
-- The development books run five levels deep, so any depth thesis is untestable
-  past L5.
-- R² swings with cross-fold regime shift, so direction (correlation, hit-rate)
-  and the three-class metrics are preferred over R².
-- The split is temporal, not by market: a market trading on both sides of the
-  boundary appears in train and test alike. That is intended, since the question
-  is whether the next few seconds are predictable, but these numbers do not bound
-  cross-market generalization.
-- FI-2010 ships pre-normalized and event-indexed. It supports the level and
-  scalar feature sets and the event-horizon target; the fixed-tick grid needs a
-  real tick, which the synthetic generator and raw venue data carry.
-- The synthetic generator plants its signal, so its absolute numbers sanity-
-  check the pipeline. The development-data tables carry the empirical result.
+- **No confidence intervals.** The smoothed label windows overlap heavily, so
+  consecutive rows share almost their entire label and the effective sample is
+  far below the row count. A naive interval on that row count would be roughly
+  an order of magnitude too tight. The honest estimator is a block bootstrap
+  over markets or market-days, and it has not been run.
+- **Correlation is tail-decided on this corpus.** The forward-return
+  distribution has excess kurtosis 55.5: the middle 50% of moves span ±0.0014
+  while the 1st and 99th percentiles are ±0.088. Correlation is therefore
+  largely a statement about rare large moves, and where it disagrees with
+  hit-rate, hit-rate is the more robust comparison.
+- **No costed backtest.** Every number is forecast quality against a price
+  change, not PnL. Half of all trade prints occur at spreads of 8 ticks or more,
+  so a taker signal would likely lose most of this edge to the spread.
+- **The primary corpus is single-venue and single-instrument.** All 371 markets
+  are Kalshi daily-temperature contracts, so any cross-corpus comparison is
+  confounded with the venue and instrument mix.
+- **The horizon sweep confounds horizon with target smoothing**, since the time
+  axis uses a smoothed target. The same sweep with a point target has not been
+  run.
+- **The five-level depth limit.** These books run five levels deep, so the
+  depth-attention thesis is untestable past L5.
+- **FI-2010 ships pre-normalized and event-indexed**, so it supports the level
+  and scalar feature sets and the event-horizon target, but not the fixed-tick
+  grid, which needs a real tick.
+- **The synthetic generator plants its signal**, so its absolute numbers check
+  the pipeline rather than measure anything.
 
 ## License
 
