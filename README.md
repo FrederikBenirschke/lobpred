@@ -10,37 +10,35 @@ from the current book, and benchmarks deep sequence models against gradient
 boosted trees on that question. It is a prediction study: it reports forecast
 quality, not trading PnL.
 
-The package covers the whole path. It loads order-book recordings into one
-schema, builds microstructure features, trains linear, tree and deep models on a
-shared target and split, and scores them. A synthetic generator with a planted
+The package loads order-book recordings into one schema, builds microstructure
+features, trains linear, tree and deep models on a shared target and split, and
+scores them. A synthetic generator with a planted
 signal and a loader for the public FI-2010 benchmark let every result run
 without private data.
 
 ## What it finds
 
-**Which price you predict matters more than which model you use.** Predicting
-the microprice scores roughly twice as high as predicting the mid on identical
-rows (0.53 against 0.22 for the best model). The microprice is the easier
-target because it is defined by the same touch sizes the features report, and it
-moves whenever those sizes move. It is also the less faithful one: against
-474,449 trade prints it is closer to the execution price than the mid on only
-40% of them. The mid number is the one to quote.
+**The predictand changes the score more than the model does.** Predicting the
+microprice scores roughly twice as high as predicting the mid on identical rows
+(0.53 against 0.22 for the best model). The microprice is defined by the same
+touch sizes the features report and moves whenever those sizes move. Against
+474,449 trade prints it is closer to the execution price than the mid on 40% of
+them.
 
-**The prediction horizon matters more than the model.** Across 1 to 60 seconds
-the network's correlation falls from 0.58 to 0.44 while the tree stays nearly
-flat. Horizon sensitivity is a property of the sequence model rather than of the
-data, so a comparison run at one horizon can rank models differently than a
-swept one.
+**The horizon changes the score more than the model does.** Across 1 to 60
+seconds the network's correlation falls from 0.58 to 0.44 while the tree stays
+nearly flat. Horizon sensitivity is a property of the sequence model rather
+than of the data, so a comparison run at one horizon can rank models
+differently than a swept one.
 
-**Model class matters least.** Sequence models read a window of history while a
-tree reads a single snapshot. Give the tree the same 32-tick window and almost
-the whole apparent gap closes: LightGBM comes within 0.02 of the best network on
-microprice and matches it on mid.
+**Model class changes it least.** Sequence models read a window of history
+while a tree reads a single snapshot. Given the same 32-tick window, LightGBM
+comes within 0.02 of the best network on microprice and matches it on mid.
 
-**The input representation is the lever that pays.** Adding the raw price and
-size ladder on top of engineered features lifts every model, tree and network
-alike. The lift survives scoring within price-decile buckets, so it is not an
-artifact of the bounded [0, 1] price scale.
+**The input representation changes it most.** Adding the raw price and size
+ladder on top of engineered features lifts every model, tree and network alike.
+The lift survives scoring within price-decile buckets, so it is not an artifact
+of the bounded [0, 1] price scale.
 
 ## Quickstart
 
@@ -159,9 +157,9 @@ generalization.
 
 ### Market selection
 
-A market is interesting when its price actually moves. Markets are ranked by
-mid-price changes per minute rather than by quote count: a book that posts 500
-quotes a minute while its mid moves twice contributes mostly noise.
+Markets are ranked by mid-price changes per minute rather than by quote count.
+The two diverge: a book can post several hundred quotes per minute while its mid
+moves twice.
 
 ### Models
 
@@ -203,11 +201,11 @@ between bid and ask weighted by the touch sizes, so it moves whenever those
 sizes move, with no trade and no price level clearing — and the features that
 predict it include the sizes that define it.
 
-Whether that makes it the right target is a separate question. Joining 474,449
-trade prints to the book state at the same millisecond, the microprice is closer
-to the actual execution price than the mid on 40.15% of them, below the 50%
-no-information line. It wins only where the spread is 0-2 ticks, which is 3.3%
-of prints, while half of all prints occur at spreads of 8 ticks or more.
+Joining 474,449 trade prints to the book state at the same millisecond, the
+microprice is closer to the execution price than the mid on 40.15% of them,
+against 50% for no information. It is closer only where the spread is 0-2
+ticks, which covers 3.3% of prints; half of all prints occur at spreads of 8
+ticks or more.
 
 ### Horizon
 
@@ -228,9 +226,9 @@ event horizons a point change; compare within an axis, not across.
 The network decays monotonically along the time axis while LightGBM is nearly
 flat. On mid at 60 seconds the network (0.126) falls below ridge (0.183).
 
-Shorter is not automatically better: the smoothed target averages fewer ticks at
-a short horizon and is noisier per observation, and a 1-second horizon is not
-reachable by a strategy that has to cross a spread.
+The smoothed target averages fewer ticks at a short horizon, so it is noisier
+per observation as correlation rises. A 1-second horizon is also not reachable
+by a strategy that has to cross a spread.
 
 ### Lookback against architecture
 
@@ -274,8 +272,9 @@ eight of ten.
 Pooled correlation averages markets that differ by more than 2x. On the earlier
 923-market corpus LightGBM scored 0.56 on tennis, 0.36 on weather and 0.23 on
 NBA. A model trained on one segment matches the pooled model on that segment's
-own test windows, so pooling heterogeneous markets costs nothing; the low
-aggregate is an average of one easy segment and several hard ones.
+own test windows, so pooling heterogeneous markets does not reduce per-segment
+accuracy. The pooled figure is an average over segments of differing
+difficulty.
 
 ### Further results
 
@@ -340,8 +339,8 @@ head-to-head on one dataset:
 
 - **Engineered features at medium scale** (here): a snapshot tree matches or
   beats the sequence networks, and more data widens the tree's lead.
-- **Raw book at large scale and depth** (FI-2010): the CNN-LSTM earns its keep
-  on 10-level input.
+- **Raw book at large scale and depth** (FI-2010): the CNN-LSTM leads on
+  10-level input.
 
 This venue's books sit between the two: the raw book lifts every model, but at
 five levels and this scale no network pulls ahead of a tree given the same
@@ -352,8 +351,8 @@ input.
 - **No confidence intervals.** The smoothed label windows overlap heavily, so
   consecutive rows share almost their entire label and the effective sample is
   far below the row count. A naive interval on that row count would be roughly
-  an order of magnitude too tight. The honest estimator is a block bootstrap
-  over markets or market-days, and it has not been run.
+  an order of magnitude too tight. A block bootstrap over markets or
+  market-days would be the appropriate estimator; it has not been run.
 - **Correlation is tail-decided on this corpus.** The forward-return
   distribution has excess kurtosis 55.5: the middle 50% of moves span ±0.0014
   while the 1st and 99th percentiles are ±0.088. Correlation is therefore
