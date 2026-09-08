@@ -84,12 +84,33 @@ class LoadConfig:
     tail_drop_s: float = 0.0
 
 
+# Derived per-hour parquet sidecars sit BESIDE the book parquet with a
+# different schema. A file is book tape iff it is `.parquet` and none of
+# these. Declared once, in suffix form, so adding a sidecar is one edit.
+#
+# This is deliberately a LOCAL copy of the monorepo's
+# `scripts.research._recording_io.is_book_parquet`: this package is published
+# standalone, so it cannot import across that boundary. Keep the two in sync;
+# the failure it guards against is silent. Testing one suffix by hand is what
+# let `*.staleness.parquet` reach ~30 book readers at once, since a reader that
+# NULL-fills missing columns admits the rows as garbage rather than raising.
+_SIDECAR_SUFFIXES = (".trades.parquet", ".staleness.parquet")
+
+
+def _is_book_parquet(path: Path) -> bool:
+    """True iff ``path`` is a per-hour BOOK parquet, not a sidecar."""
+    name = path.name
+    if not name.endswith(".parquet"):
+        return False
+    return not any(name.endswith(sfx) for sfx in _SIDECAR_SUFFIXES)
+
+
 def discover_book_parquets(roots: tuple[Path, ...]) -> list[Path]:
     """All book parquets under the roots (skipping ``_system`` and trade files)."""
     out: list[Path] = []
     for r in roots:
         out.extend(p for p in Path(r).rglob("*.parquet")
-                   if p.parent.name != "_system" and not p.name.endswith((".trades.parquet", ".staleness.parquet")))
+                   if p.parent.name != "_system" and _is_book_parquet(p))
     if not out:
         raise FileNotFoundError(f"no book parquets under {[str(r) for r in roots]}")
     return sorted(out)
